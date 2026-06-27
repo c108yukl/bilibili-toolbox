@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.bili_cache/
+bak/
+*.pem
+*.crx

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>B站爬虫 - 设置</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+      background: #0f0f1a; color: #e0e0e0; padding: 32px 20px; max-width: 600px; margin: 0 auto;
+    }
+    h1 { font-size: 22px; margin-bottom: 24px; color: #00c8ff; }
+    .card { background: #1a1a2e; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    .card h2 { font-size: 15px; color: #aaa; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #222; }
+    .row:last-child { border-bottom: none; }
+    .row label { font-size: 14px; color: #ddd; cursor: pointer; }
+    .row .desc { font-size: 12px; color: #888; margin-top: 2px; }
+    input[type="checkbox"] { accent-color: #00c8ff; width: 18px; height: 18px; cursor: pointer; }
+    select, input[type="number"] {
+      padding: 6px 10px; border: 1px solid #333; border-radius: 6px;
+      background: #0f0f1a; color: #e0e0e0; font-size: 13px; outline: none;
+    }
+    select:focus, input:focus { border-color: #00c8ff; }
+    .btn-save {
+      width: 100%; padding: 12px; border: none; border-radius: 8px;
+      background: linear-gradient(135deg, #00c8ff, #0088cc); color: #fff;
+      font-size: 16px; font-weight: 600; cursor: pointer; transition: opacity .2s;
+    }
+    .btn-save:hover { opacity: .85; }
+    .btn-save:disabled { opacity: .4; cursor: not-allowed; }
+    #msg { text-align: center; margin-top: 12px; font-size: 13px; min-height: 20px; }
+    .msg-success { color: #4caf50; }
+    .msg-error { color: #f44336; }
+  </style>
+</head>
+<body>
+  <h1>⚙️ B站爬虫设置</h1>
+
+  <div class="card">
+    <h2>Cookie</h2>
+    <div class="row">
+      <div>
+        <label for="auto-cookie">自动从浏览器读取B站Cookie</label>
+        <div class="desc">开启后每次打开插件自动提取当前登录态的Cookie，无需手动粘贴</div>
+      </div>
+      <input type="checkbox" id="auto-cookie">
+    </div>
+    <div class="row" style="flex-direction:column;align-items:stretch">
+      <label style="margin-bottom:4px">当前浏览器中的B站Cookie</label>
+      <textarea id="cookie-display" readonly style="width:100%;min-height:50px;padding:6px 10px;border:1px solid #333;border-radius:6px;background:#0a0a14;color:#888;font-size:12px;font-family:monospace;resize:vertical;outline:none" placeholder="正在读取..."></textarea>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button id="btn-refresh-cookie" style="padding:4px 12px;border:1px solid #555;border-radius:4px;background:transparent;color:#aaa;font-size:12px;cursor:pointer">🔄 刷新</button>
+        <span id="cookie-status" style="font-size:11px;color:#888;line-height:26px"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>默认勾选项</h2>
+    <div class="row">
+      <label for="def-dm">弹幕</label>
+      <input type="checkbox" id="def-dm">
+    </div>
+    <div class="row">
+      <label for="def-cm">评论</label>
+      <input type="checkbox" id="def-cm">
+    </div>
+    <div class="row">
+      <label for="def-sub">字幕</label>
+      <input type="checkbox" id="def-sub">
+    </div>
+    <div class="row">
+      <label for="def-replies">楼中楼回复</label>
+      <input type="checkbox" id="def-replies">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>默认参数</h2>
+    <div class="row">
+      <label for="def-format">导出格式</label>
+      <select id="def-format">
+        <option value="json">JSON</option>
+        <option value="csv">CSV</option>
+        <option value="txt">TXT</option>
+        <option value="srt">SRT</option>
+        <option value="ass">ASS</option>
+        <option value="lrc">LRC</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="def-sub-lan">字幕语言</label>
+      <select id="def-sub-lan">
+        <option value="ai-zh">中文（AI）</option>
+        <option value="zh-Hans">中文（简体）</option>
+        <option value="zh-Hant">中文（繁体）</option>
+        <option value="en">英语</option>
+        <option value="ja">日语</option>
+        <option value="ko">韩语</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="def-max-pages">最大翻页数 (0=全部)</label>
+      <input type="number" id="def-max-pages" min="0" value="0" style="width:80px">
+    </div>
+    <div class="row">
+      <label for="sub-time-format">TXT字幕时间格式</label>
+      <select id="sub-time-format">
+        <option value="seconds">秒数 [0.5s]</option>
+        <option value="full">完整 [00:00:00.500]</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>开发者</h2>
+    <div class="row">
+      <div>
+        <label for="dev-mode">开发者模式</label>
+        <div class="desc">在 edge://extensions/ → 扩展详情 → "检查视图" 的 Console 中查看</div>
+      </div>
+      <input type="checkbox" id="dev-mode">
+    </div>
+  </div>
+
+  <button class="btn-save" id="btn-save">💾 保存设置</button>
+  <div id="msg"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>
