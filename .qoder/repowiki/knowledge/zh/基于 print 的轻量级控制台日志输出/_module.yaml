@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: logging_system
+title: 基于 print 的轻量级控制台日志输出
+scope: []
+source_files:
+    - bilibili/comments.py
+    - bilibili/danmaku.py
+    - bilibili/auth.py
+    - cli.py
+    - app.py
+depends_on: []
+related_to: []

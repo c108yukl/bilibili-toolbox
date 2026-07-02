@@ -1,0 +1,155 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: master
+nodes_managed: true
+exported_at: "2026-07-02T05:31:10Z"
+modules:
+    "":
+        dir_name: B站弹幕_评论_字幕爬虫三端项目
+        title: B站弹幕/评论/字幕爬虫三端项目
+        scope:
+            - .gitignore
+            - requirements.txt
+            - .bili_cache\503932d4eae80798a791d2ea795dc15c.json
+            - .bili_cache\96f128c5fd0aea9cf9eee30197f1123a.json
+            - .bili_cache\9759076a455a70b42066e312f1a73c4a.json
+            - .bili_cache\c1361a0dc8490d0260c4efebf8028b06.json
+            - .bili_cache\f01ee7551b673a990cfd4192f604b436.json
+            - README.md
+            - bak\bilibili-extension.zip
+            - bak\bilibili_全量备份_20260627.zip
+            - bak\danmaku_BV1FPVG6KEex.txt
+            - bak\danmaku_BV1eWj26cEYv.txt
+            - bak\danmaku_BV1tS7b6VEyi.txt
+            - bak\subtitle_BV1FPVG6KEex_ai-zh.srt
+            - bak\subtitle_BV1NGjR6rEZv_ai-zh.srt
+            - bak\subtitle_BV1xkJc6wEAz_ai-zh.srt
+            - bak\备份001.zip
+            - bilibili-extension--main.crx
+            - bilibili-extension--main.pem
+            - bilibili-extension--main\README.md
+            - bilibili-extension--main\background.js
+            - bilibili-extension--main\manifest.json
+            - bilibili-extension--main\options.html
+            - bilibili-extension--main\options.js
+            - bilibili-extension--main\popup.html
+            - bilibili-extension--main\popup.js
+            - bilibili-extension--main\utils.js
+            - bilibili\__init__.py
+            - bilibili\auth.py
+            - bilibili\cache.py
+            - bilibili\comments.py
+            - bilibili\danmaku.py
+            - bilibili\formatters.py
+            - bilibili\subtitle.py
+            - bilibili\utils.py
+        source_files: []
+        children:
+            - bilibili_sdk
+            - browser_extension
+            - cli_and_demo
+        depends_on: []
+        related_to: []
+    bilibili_sdk:
+        dir_name: B站弹幕_评论_字幕抓取 SDK
+        title: B站弹幕/评论/字幕抓取 SDK
+        scope:
+            - bilibili/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    browser_extension:
+        dir_name: B站弹幕_评论_字幕爬虫浏览器扩展
+        title: B站弹幕/评论/字幕爬虫浏览器扩展
+        scope:
+            - bilibili-extension--main/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    build_system:
+        dir_name: Python 脚本直跑型构建体系
+        title: Python 脚本直跑型构建体系
+        scope: []
+        source_files:
+            - requirements.txt
+            - cli.py
+            - app.py
+            - bilibili-extension--main/manifest.json
+        children: []
+        depends_on: []
+        related_to: []
+    cli_and_demo:
+        dir_name: B站爬虫 CLI 与 Streamlit Web 演示
+        title: B站爬虫 CLI 与 Streamlit Web 演示
+        scope:
+            - app.py
+            - cli.py
+            - bilibili_demo.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    configuration_system:
+        dir_name: 配置系统 — 基于命令行参数与本地文件缓存的轻量运行时配置
+        title: 配置系统 — 基于命令行参数与本地文件缓存的轻量运行时配置
+        scope: []
+        source_files:
+            - cli.py
+            - app.py
+            - bilibili_demo.py
+            - bilibili/auth.py
+            - bilibili/cache.py
+            - .bili_cache
+        children: []
+        depends_on: []
+        related_to: []
+    dependency_management:
+        dir_name: Python 依赖管理（requirements.txt + 浏览器扩展内联）
+        title: Python 依赖管理（requirements.txt + 浏览器扩展内联）
+        scope: []
+        source_files:
+            - requirements.txt
+            - bilibili/auth.py
+            - bilibili-extension--main/manifest.json
+            - bilibili-extension--main/utils.js
+        children: []
+        depends_on: []
+        related_to: []
+    error_handling:
+        dir_name: Python 脚本式错误处理：局部 try_except + ValueError 参数校验
+        title: Python 脚本式错误处理：局部 try/except + ValueError 参数校验
+        scope: []
+        source_files:
+            - bilibili/utils.py
+            - bilibili_demo.py
+            - app.py
+        children: []
+        depends_on: []
+        related_to: []
+    frontend_style:
+        dir_name: 浏览器扩展内联样式与暗色主题约定
+        title: 浏览器扩展内联样式与暗色主题约定
+        scope: []
+        source_files:
+            - bilibili-extension--main/popup.html
+            - bilibili-extension--main/options.html
+            - bilibili-extension--main/manifest.json
+        children: []
+        depends_on: []
+        related_to: []
+    logging_system:
+        dir_name: 基于 print 的轻量级控制台日志输出
+        title: 基于 print 的轻量级控制台日志输出
+        scope: []
+        source_files:
+            - bilibili/comments.py
+            - bilibili/danmaku.py
+            - bilibili/auth.py
+            - cli.py
+            - app.py
+        children: []
+        depends_on: []
+        related_to: []

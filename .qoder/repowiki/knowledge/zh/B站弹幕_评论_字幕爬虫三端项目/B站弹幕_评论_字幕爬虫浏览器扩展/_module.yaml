@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: browser_extension
+title: B站弹幕/评论/字幕爬虫浏览器扩展
+scope:
+    - bilibili-extension--main/
+source_files: []
+depends_on: []
+related_to: []

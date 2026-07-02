@@ -1,0 +1,42 @@
+schema_version: 1
+module_path: ""
+title: B站弹幕/评论/字幕爬虫三端项目
+scope:
+    - .gitignore
+    - requirements.txt
+    - .bili_cache\503932d4eae80798a791d2ea795dc15c.json
+    - .bili_cache\96f128c5fd0aea9cf9eee30197f1123a.json
+    - .bili_cache\9759076a455a70b42066e312f1a73c4a.json
+    - .bili_cache\c1361a0dc8490d0260c4efebf8028b06.json
+    - .bili_cache\f01ee7551b673a990cfd4192f604b436.json
+    - README.md
+    - bak\bilibili-extension.zip
+    - bak\bilibili_全量备份_20260627.zip
+    - bak\danmaku_BV1FPVG6KEex.txt
+    - bak\danmaku_BV1eWj26cEYv.txt
+    - bak\danmaku_BV1tS7b6VEyi.txt
+    - bak\subtitle_BV1FPVG6KEex_ai-zh.srt
+    - bak\subtitle_BV1NGjR6rEZv_ai-zh.srt
+    - bak\subtitle_BV1xkJc6wEAz_ai-zh.srt
+    - bak\备份001.zip
+    - bilibili-extension--main.crx
+    - bilibili-extension--main.pem
+    - bilibili-extension--main\README.md
+    - bilibili-extension--main\background.js
+    - bilibili-extension--main\manifest.json
+    - bilibili-extension--main\options.html
+    - bilibili-extension--main\options.js
+    - bilibili-extension--main\popup.html
+    - bilibili-extension--main\popup.js
+    - bilibili-extension--main\utils.js
+    - bilibili\__init__.py
+    - bilibili\auth.py
+    - bilibili\cache.py
+    - bilibili\comments.py
+    - bilibili\danmaku.py
+    - bilibili\formatters.py
+    - bilibili\subtitle.py
+    - bilibili\utils.py
+source_files: []
+depends_on: []
+related_to: []

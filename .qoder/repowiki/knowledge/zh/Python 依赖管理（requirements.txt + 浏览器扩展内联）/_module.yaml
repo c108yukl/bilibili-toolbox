@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: dependency_management
+title: Python 依赖管理（requirements.txt + 浏览器扩展内联）
+scope: []
+source_files:
+    - requirements.txt
+    - bilibili/auth.py
+    - bilibili-extension--main/manifest.json
+    - bilibili-extension--main/utils.js
+depends_on: []
+related_to: []

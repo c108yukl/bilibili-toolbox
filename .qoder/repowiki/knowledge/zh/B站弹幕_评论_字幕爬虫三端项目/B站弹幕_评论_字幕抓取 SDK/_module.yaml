@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: bilibili_sdk
+title: B站弹幕/评论/字幕抓取 SDK
+scope:
+    - bilibili/
+source_files: []
+depends_on: []
+related_to: []
