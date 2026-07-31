@@ -7,7 +7,39 @@
 
   let port = null;
   let running = false;
+  let soundEnabled = true;
+  let audioCtx = null;
   const blobUrls = [];
+
+  // ---- 音效（WebAudio 合成，无需音频文件）----
+  function playSound(type) {
+    if (!soundEnabled) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const t0 = audioCtx.currentTime;
+      const note = (freq, delay, dur, vol = 0.1) => {
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(vol, t0 + delay);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + delay + dur);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(t0 + delay); o.stop(t0 + delay + dur + 0.05);
+      };
+      if (type === 'done') { note(880, 0, 0.18); note(1174.7, 0.12, 0.22); }
+      else if (type === 'ok') { note(660, 0, 0.15, 0.08); }
+      else if (type === 'error') { note(220, 0, 0.3, 0.12); note(180, 0.15, 0.3, 0.12); }
+      else if (type === 'click') { note(760, 0, 0.045, 0.06); }
+      else if (type === 'switch') { note(520, 0, 0.05, 0.07); note(1040, 0.04, 0.06, 0.07); }
+    } catch (e) { }
+  }
+
+  // 按钮/开关点击音效（全局捕获，轻量）
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('button')) playSound('click');
+    else if (e.target.closest('.switch')) playSound('switch');
+  }, true);
 
   // ---- Settings storage（local 优先，sync 兼容旧数据）----
   async function getSettings() {
@@ -22,14 +54,41 @@
     return {};
   }
 
+  // ---- 依赖勾选联动：热词↔弹幕，AI总结↔字幕，AI弹幕↔弹幕 ----
+  function syncOptionStates() {
+    const dmOn = $('chk-danmaku').checked;
+    const subOn = $('chk-subtitle').checked;
+    $('opt-cloud').classList.toggle('opt-hide', !dmOn);
+    $('opt-ai-dm').classList.toggle('opt-hide', !dmOn);
+    $('opt-ai').classList.toggle('opt-hide', !subOn);
+    if (!dmOn) { $('chk-cloud').checked = false; $('chk-ai-dm').checked = false; }
+    if (!subOn) $('chk-ai').checked = false;
+  }
+
+  // ---- 按设置控制主界面分区显隐 ----
+  function applyVisibility(cfg) {
+    const map = [
+      ['sec-batch', cfg.showBatch !== false],
+      ['row-opts', cfg.showOptsRow !== false],
+      ['row-advanced', cfg.showAdvancedRow !== false],
+      ['sec-cookie', cfg.showCookie !== false]
+    ];
+    for (const [id, show] of map) {
+      const el = $(id);
+      if (el) el.style.display = show ? '' : 'none';
+    }
+  }
+
   // ---- Load settings and apply defaults ----
   (async function init() {
+    let tabBvid = null;
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
       if (tab?.url) {
         const m = tab.url.match(/BV[a-zA-Z0-9]+/);
         if (m) {
+          tabBvid = m[0];
           $('bvid').value = m[0];
           $('auto-detect-hint').textContent = `✅ 已自动识别: ${m[0]}`;
         } else if (tab.url.includes('bilibili.com')) {
@@ -38,9 +97,22 @@
       }
     } catch (e) { }
 
+    // 记忆上次输入的 BV（当前页无 BV 时恢复）
+    if (!tabBvid) {
+      try {
+        const s = await chrome.storage.session.get('lastBvid');
+        if (s.lastBvid) {
+          $('bvid').value = s.lastBvid;
+          $('auto-detect-hint').textContent = `🔁 已恢复上次: ${s.lastBvid}`;
+        }
+      } catch (e) { }
+    }
+
     // Load user settings
     try {
       const cfg = await getSettings();
+      soundEnabled = cfg.soundEnabled !== false;
+      applyTheme(cfg.theme);
       $('chk-danmaku').checked = cfg.defaultDanmaku !== undefined ? cfg.defaultDanmaku : true;
       $('chk-comments').checked = !!cfg.defaultComments;
       $('chk-subtitle').checked = !!cfg.defaultSubtitle;
@@ -48,6 +120,8 @@
       $('max-pages').value = cfg.defaultMaxPages || 0;
       if (cfg.defaultFormat) $('save-fmt').value = cfg.defaultFormat;
       if (cfg.defaultSubLan) $('sub-lan').value = cfg.defaultSubLan;
+      syncOptionStates();
+      applyVisibility(cfg);
 
       // Auto-cookie
       if (cfg.autoCookie) {
@@ -107,12 +181,14 @@
       switch (msg.type) {
         case 'progress':
           appendLog(msg.message, 'log-progress');
+          if (typeof msg.percent === 'number') setProgress(msg.percent);
           break;
         case 'info':
           appendLog(msg.message, 'log-info');
           break;
         case 'success':
           appendLog(msg.message, 'log-success');
+          playSound('ok');
           break;
         case 'error':
           appendLog(msg.message, 'log-error');
@@ -120,17 +196,31 @@
         case 'file':
           addDownload(msg.task, msg.filename, msg.content, msg.mimeType);
           break;
+        case 'up':
+          showUpInfo(msg.bvid, msg.up);
+          break;
+        case 'cloud':
+          showCloud(msg.bvid, msg.words);
+          break;
+        case 'summary':
+          showSummary(msg.bvid, msg.partial, msg.done !== false);
+          break;
+        case 'ai-dm':
+          showAiDm(msg.bvid, msg.partial, msg.done !== false);
+          break;
         case 'done':
           appendLog('✅ ' + msg.message, 'log-success');
           setRunning(false);
+          setProgress(100);
+          playSound('done');
           break;
         case 'abort':
           appendLog('⛔ ' + msg.message, 'log-error');
           setRunning(false);
+          playSound('error');
           break;
         case 'status':
           if (msg.running && !running) {
-            // 打开 popup 时任务已在后台运行（可能从右键菜单或上次关闭的 popup 启动）
             appendLog('⏳ 检测到后台任务正在运行...', 'log-progress');
             setRunning(true);
           }
@@ -143,7 +233,6 @@
       // 不改变 running 状态：任务在后台继续，重新打开 popup 时会通过 status 同步
     });
 
-    // 查询当前后台任务状态
     try { port.postMessage({ action: 'status' }); } catch (e) { }
   }
 
@@ -156,13 +245,101 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  function clearLog() {
-    logBox.innerHTML = '';
+  function clearLog() { logBox.innerHTML = ''; }
+
+  // ---- Progress ----
+  function setProgress(percent) {
+    $('progress-wrap').classList.add('show');
+    $('progress-text').classList.add('show');
+    $('progress-bar').style.width = Math.max(0, Math.min(100, percent)) + '%';
+    $('progress-text').textContent = `进度 ${Math.round(percent)}%`;
   }
 
-  function scrollLogToBottom() {
-    logBox.scrollTop = logBox.scrollHeight;
+  // ---- Result panels ----
+  function showUpInfo(bvid, up) {
+    const info = [`👤 ${up.name}`];
+    if (up.fans != null) info.push(`粉丝 ${up.fans.toLocaleString()}`);
+    if (up.archives != null) info.push(`投稿 ${up.archives}`);
+    if (up.level != null) info.push(`Lv${up.level}`);
+    if (up.official) info.push(up.official);
+    if (up.sign) info.push(`— ${up.sign}`);
+    $('up-info').textContent = `${info.join(' | ')} (${bvid})`;
+    $('panel-up').classList.add('show');
   }
+
+  function showCloud(bvid, words) {
+    const box = $('cloud-box');
+    box.innerHTML = '';
+    if (!words || !words.length) {
+      box.textContent = '（无足够弹幕文本）';
+    } else {
+      const max = words[0].count;
+      const min = words[words.length - 1].count;
+      for (const { word, count } of words) {
+        const span = document.createElement('span');
+        const size = max === min ? 14 : 12 + Math.round(((count - min) / (max - min)) * 16);
+        span.style.fontSize = size + 'px';
+        span.style.color = `hsl(${(word.length * 47) % 360}, 60%, 70%)`;
+        span.textContent = `${word}(${count})`;
+        span.title = `${word}: ${count} 次`;
+        box.appendChild(span);
+      }
+    }
+    $('panel-cloud').querySelector('h3').title = `弹幕热词 - ${bvid}`;
+    $('panel-cloud').classList.add('show');
+  }
+
+  let lastSummaryText = '';
+  function showSummary(bvid, text, done) {
+    lastSummaryText = done ? text : lastSummaryText;
+    $('summary-body').textContent = text;
+    if (!done && text) {
+      $('summary-body').scrollTop = $('summary-body').scrollHeight;
+    }
+    if (!$('panel-summary').classList.contains('show')) {
+      $('panel-summary').querySelector('h3').title = `AI 总结 - ${bvid}`;
+      $('panel-summary').classList.add('show');
+    }
+  }
+
+  let lastAiDmText = '';
+  function showAiDm(bvid, text, done) {
+    lastAiDmText = done ? text : lastAiDmText;
+    $('ai-dm-body').textContent = text;
+    if (!done && text) {
+      $('ai-dm-body').scrollTop = $('ai-dm-body').scrollHeight;
+    }
+    if (!$('panel-ai-dm').classList.contains('show')) {
+      $('panel-ai-dm').querySelector('h3').title = `AI 弹幕分析 - ${bvid}`;
+      $('panel-ai-dm').classList.add('show');
+    }
+  }
+
+  // ---- Copy buttons ----
+  async function copyText(text, btn) {
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = '✅ 已复制';
+      setTimeout(() => { btn.textContent = '📋 复制'; }, 1500);
+    } catch (e) {
+      btn.textContent = '❌ 失败';
+      setTimeout(() => { btn.textContent = '📋 复制'; }, 1500);
+    }
+  }
+
+  $('btn-cloud-copy').addEventListener('click', (e) => {
+    const words = [...$('cloud-box').querySelectorAll('span')].map(s => s.textContent);
+    copyText(words.join('\n'), e.target);
+  });
+  $('btn-summary-copy').addEventListener('click', (e) => {
+    copyText(lastSummaryText, e.target);
+  });
+  $('btn-ai-dm-copy').addEventListener('click', (e) => {
+    copyText(lastAiDmText, e.target);
+  });
+  $('btn-copy-bvid').addEventListener('click', (e) => {
+    copyText($('bvid').value.trim(), e.target);
+  });
 
   // ---- Download & Copy ----
   function addDownload(task, filename, content, mimeType) {
@@ -171,13 +348,12 @@
     wrap.style.gap = '4px';
     wrap.style.margin = '3px';
 
-    const icons = { danmaku: '💬', comments: '📝', subtitle: '📄' };
+    const icons = { danmaku: '💬', comments: '📝', subtitle: '📄', cloud: '☁️', up: '👤', summary: '🤖', 'summary-json': '🧠', analysis: '🧠', 'analysis-json': '🧠' };
     const label = `${icons[task] || '📎'} ${filename}`;
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     blobUrls.push(url);
 
-    // Download button
     const dlBtn = document.createElement('button');
     dlBtn.className = 'download-btn';
     dlBtn.innerHTML = label;
@@ -189,7 +365,6 @@
     };
     wrap.appendChild(dlBtn);
 
-    // Copy button
     const cpBtn = document.createElement('button');
     cpBtn.className = 'download-btn';
     cpBtn.textContent = '📋';
@@ -209,7 +384,6 @@
     wrap.appendChild(cpBtn);
 
     downloadArea.appendChild(wrap);
-    scrollLogToBottom();
   }
 
   function clearDownloads() {
@@ -225,34 +399,61 @@
     btnCancel.style.display = state ? 'block' : 'none';
   }
 
+  // ---- Parse batch list ----
+  function parseBvidList() {
+    const lines = $('batch-list').value
+      .split(/\r?\n/)
+      .map(l => extractBVID(l))
+      .filter(Boolean);
+    return [...new Set(lines)];
+  }
+
   // ---- Start task ----
   async function startTask() {
     const bvid = extractBVID($('bvid').value);
-    if (!bvid) {
+    const batch = parseBvidList();
+    if (!bvid && batch.length === 0) {
       appendLog('❌ 请输入有效的BV号或视频链接', 'log-error');
       return;
     }
 
     clearLog();
     clearDownloads();
+    $('panel-up').classList.remove('show');
+    $('panel-cloud').classList.remove('show');
+    $('panel-summary').classList.remove('show');
+    $('panel-ai-dm').classList.remove('show');
+    $('progress-wrap').classList.remove('show');
+    $('progress-text').classList.remove('show');
     setRunning(true);
 
     if (!port) connect();
 
     const cfg = await getSettings();
+    try { await chrome.storage.session.set({ lastBvid: bvid || batch[0] }); } catch (e) { }
     const params = {
       danmaku: $('chk-danmaku').checked,
       comments: $('chk-comments').checked,
       subtitle: $('chk-subtitle').checked,
+      wordCloud: $('chk-cloud').checked,
+      upInfo: $('chk-up').checked,
+      aiSummary: $('chk-ai').checked,
+      aiDanmaku: $('chk-ai-dm').checked,
       withReplies: $('chk-replies').checked,
       maxPages: parseInt($('max-pages').value) || 0,
       subLan: $('sub-lan').value,
       saveFormat: $('save-fmt').value,
       cookie: $('cookie').value || '',
-      subtitleTimeFormat: cfg.subtitleTimeFormat || 'seconds'
+      subtitleTimeFormat: cfg.subtitleTimeFormat || 'seconds',
+      cloudTopN: cfg.cloudTopN || 30
     };
 
-    port.postMessage({ action: 'start', bvid, params });
+    if (batch.length > 0) {
+      params.bvidList = bvid ? [...new Set([bvid, ...batch])] : batch;
+      appendLog(`📚 批量模式：${params.bvidList.length} 个视频`, 'log-info');
+    }
+
+    port.postMessage({ action: 'start', bvid: bvid || batch[0], params });
   }
 
   // ---- Cancel ----
@@ -263,9 +464,27 @@
     }
   }
 
+  // ---- 一键全选 ----
+  function selectAllTasks() {
+    $('chk-danmaku').checked = true;
+    $('chk-comments').checked = true;
+    $('chk-subtitle').checked = true;
+    $('chk-cloud').checked = true;
+    $('chk-up').checked = true;
+    $('chk-ai').checked = true;
+    $('chk-ai-dm').checked = true;
+    $('chk-replies').checked = true;
+    syncOptionStates();
+    appendLog('🪄 已全选所有任务', 'log-info');
+  }
+
   // ---- Event listeners ----
   btnStart.addEventListener('click', startTask);
   btnCancel.addEventListener('click', cancelTask);
+  $('btn-select-all').addEventListener('click', selectAllTasks);
+  $('chk-danmaku').addEventListener('change', syncOptionStates);
+  $('chk-subtitle').addEventListener('change', syncOptionStates);
+  $('chk-comments').addEventListener('change', syncOptionStates);
 
   // Enter key to start
   $('bvid').addEventListener('keydown', (e) => {

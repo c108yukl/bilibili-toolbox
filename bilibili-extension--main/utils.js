@@ -192,6 +192,259 @@ async function getBiliCookies() {
   return [];
 }
 
+// ============ 弹幕热词 ============
+// 高频停用词（常见口语/虚词）
+const CLOUD_STOP_WORDS = new Set([
+  '我们', '你们', '他们', '她们', '这个', '那个', '什么', '怎么', '自己', '可以', '一个',
+  '真的', '还是', '没有', '不是', '就是', '现在', '时候', '知道', '已经', '这样', '那样',
+  '所以', '但是', '然后', '因为', '如果', '虽然', '而且', '或者', '于是', '不过', '还有',
+  '大家', '不要', '不会', '不能', '可能', '应该', '东西', '为什么', '一下', '一会',
+  '哈哈哈', '哈哈哈哈', '笑死', '无语', 'awsl', 'nb', 'wc', 'yyds'
+]);
+
+// 提取文本 token：拉丁词(≥2位) + 中文二元组
+function extractTokens(text) {
+  const tokens = [];
+  const norm = String(text || '').normalize('NFKC').toLowerCase();
+  for (const m of norm.matchAll(/[a-z0-9]{2,}/g)) tokens.push(m[0]);
+  for (const m of norm.matchAll(/[\u4e00-\u9fff]{2,}/g)) {
+    const run = m[0];
+    for (let i = 0; i < run.length - 1; i++) tokens.push(run.slice(i, i + 2));
+  }
+  return tokens;
+}
+
+// 弹幕 → 热词频率 [{word, count}]，按频率降序
+function danmakuWordCloud(dms, topN = 30) {
+  const freq = new Map();
+  for (const d of dms || []) {
+    for (const t of extractTokens(d.text || '')) {
+      if (CLOUD_STOP_WORDS.has(t)) continue;
+      if (t.length === 2 && t[0] === t[1]) continue; // 哈哈/喔喔 类叠词
+      freq.set(t, (freq.get(t) || 0) + 1);
+    }
+  }
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([word, count]) => ({ word, count }));
+}
+
+// ============ 主题色 ============
+const THEMES = {
+  aurora: ['#00c8ff', '#7c5cff'],
+  ocean: ['#38bdf8', '#2563eb'],
+  forest: ['#4ade80', '#0d9488'],
+  candy: ['#f472b6', '#a855f7'],
+  sunset: ['#fb923c', '#ef4444']
+};
+
+// 应用主题色到当前页面（popup / options / content 共用）
+function applyTheme(theme) {
+  const [a, b] = THEMES[theme] || THEMES.aurora;
+  const root = document.documentElement.style;
+  root.setProperty('--accent', a);
+  root.setProperty('--accent2', b);
+  root.setProperty('--accent-grad', `linear-gradient(135deg, ${a}, ${b})`);
+}
+
+// ============ AI 字幕总结（OpenAI 兼容接口） ============
+const AI_DEFAULTS = {
+  aiApiKey: '',
+  aiBaseUrl: 'https://api.deepseek.com',
+  aiModel: 'deepseek-chat',
+  aiPrompt: '你是视频字幕分析助手。请用中文总结以下视频字幕，输出三部分：\n1. 主题概述（2-3句话）\n2. 核心要点（编号列表）\n3. 亮点金句（如有）\n\n字幕内容：\n{text}',
+  aiDanmakuPrompt: '你是B站弹幕分析助手。请分析以下弹幕（每行一条），用中文输出四部分：\n1. 弹幕情绪倾向（正面/负面/中立的大致占比）\n2. 热议话题（弹幕最关注的几个点）\n3. 名场面 / 高能时刻（被反复刷屏的梗或事件）\n4. 有趣弹幕精选（最多5条）\n\n弹幕内容：\n{text}'
+};
+
+// 构建发送给 AI 的字幕文本（按设置省 token）
+// aiTextOnly: 仅文本（默认） / 否则带时间戳；aiMaxItems: 条数上限(0=全部)
+function buildAIText(subs, cfg = {}) {
+  let items = subs || [];
+  if (cfg.aiMaxItems > 0) items = items.slice(0, cfg.aiMaxItems);
+  const text = items
+    .map(s => cfg.aiTextOnly === false ? `[${fmtFullTime(s.from)}] ${s.content}` : s.content)
+    .join('\n');
+  return text.slice(0, 20000);
+}
+
+// 把字幕片段拼成文本供 AI 使用
+function subtitlesToText(subs) {
+  return (subs || []).map(s => `[${fmtFullTime(s.from)}] ${s.content}`).join('\n');
+}
+
+async function aiSummarize(subs, aiCfg) {
+  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
+  if (!cfg.aiApiKey) throw new Error('未配置 AI API Key（设置 → AI 总结）');
+  const text = buildAIText(subs, cfg);
+  const content = cfg.aiPrompt.replace(/\{text\}/g, text);
+  const base = cfg.aiBaseUrl.replace(/\/+$/, '');
+  const resp = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.aiApiKey}`
+    },
+    body: JSON.stringify({
+      model: cfg.aiModel || 'deepseek-chat',
+      messages: [{ role: 'user', content }],
+      temperature: 0.4,
+      max_tokens: 2000
+    })
+  });
+  if (!resp.ok) {
+    let detail = '';
+    try { detail = (await resp.json()).error?.message || ''; } catch (e) { }
+    throw new Error(`AI 接口错误(HTTP ${resp.status})${detail ? ': ' + detail : ''}`);
+  }
+  const data = await resp.json();
+  const summary = data.choices?.[0]?.message?.content || '';
+  if (!summary) throw new Error('AI 返回为空');
+  return summary.trim();
+}
+
+// 构建发送给 AI 的弹幕文本（去重 + 条数上限）
+function buildDanmakuText(dms, maxItems = 500) {
+  const seen = new Set();
+  const out = [];
+  for (const d of dms || []) {
+    const t = String(d.text || '').trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= maxItems) break;
+  }
+  return out.join('\n').slice(0, 20000);
+}
+
+// 流式 AI 调用：text 为已构建文本，prompt 支持 {text} 占位符
+// onChunk(chunk, fullText) 实时回调；signal 用于取消
+async function aiStream(text, prompt, aiCfg, onChunk, signal) {
+  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
+  if (!cfg.aiApiKey) throw new Error('未配置 AI API Key（设置 → AI 总结）');
+  const content = String(prompt || '').replace(/\{text\}/g, text || '');
+  const base = cfg.aiBaseUrl.replace(/\/+$/, '');
+  const resp = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.aiApiKey}`
+    },
+    body: JSON.stringify({
+      model: cfg.aiModel || 'deepseek-chat',
+      messages: [{ role: 'user', content }],
+      temperature: 0.4,
+      max_tokens: 2000,
+      stream: true
+    })
+  });
+  if (!resp.ok) {
+    let detail = '';
+    try { detail = (await resp.json()).error?.message || ''; } catch (e) { }
+    throw new Error(`AI 接口错误(HTTP ${resp.status})${detail ? ': ' + detail : ''}`);
+  }
+  if (!resp.body) throw new Error('该环境不支持流式输出');
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let full = '';
+  let finished = false;
+
+  while (!finished) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (payload === '[DONE]') { finished = true; break; }
+      try {
+        const json = JSON.parse(payload);
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) {
+          full += delta;
+          if (onChunk) onChunk(delta, full);
+        }
+      } catch (e) { /* 跳过非 JSON 行 */ }
+    }
+  }
+  return full.trim();
+}
+
+async function aiSummarize(subs, aiCfg) {
+  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
+  if (!cfg.aiApiKey) throw new Error('未配置 AI API Key（设置 → AI 总结）');
+  const text = buildAIText(subs, cfg);
+  const content = cfg.aiPrompt.replace(/\{text\}/g, text);
+  const base = cfg.aiBaseUrl.replace(/\/+$/, '');
+  const resp = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.aiApiKey}`
+    },
+    body: JSON.stringify({
+      model: cfg.aiModel || 'deepseek-chat',
+      messages: [{ role: 'user', content }],
+      temperature: 0.4,
+      max_tokens: 2000
+    })
+  });
+  if (!resp.ok) {
+    let detail = '';
+    try { detail = (await resp.json()).error?.message || ''; } catch (e) { }
+    throw new Error(`AI 接口错误(HTTP ${resp.status})${detail ? ': ' + detail : ''}`);
+  }
+  const data = await resp.json();
+  const summary = data.choices?.[0]?.message?.content || '';
+  if (!summary) throw new Error('AI 返回为空');
+  return summary.trim();
+}
+
+// AI 流式总结（SSE）。onChunk(chunk, fullText) 实时回调；支持取消
+async function aiSummarizeStream(subs, aiCfg, onChunk, signal) {
+  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
+  const text = buildAIText(subs, cfg);
+  return aiStream(text, cfg.aiPrompt, cfg, onChunk, signal);
+}
+
+// 获取模型列表（OpenAI 兼容：GET {base}/models）→ 模型 id 数组
+async function fetchModelList(baseUrl, apiKey) {
+  if (!apiKey) throw new Error('请先填写 API Key');
+  const base = (baseUrl || AI_DEFAULTS.aiBaseUrl).replace(/\/+$/, '');
+  const resp = await fetch(`${base}/models`, {
+    headers: { 'Authorization': `Bearer ${apiKey}` }
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  const models = (data.data || []).map(m => m.id).filter(Boolean);
+  return [...new Set(models)];
+}
+
+// 查询余额（DeepSeek 等平台支持）
+async function fetchBalance(baseUrl, apiKey) {
+  if (!apiKey) throw new Error('请先填写 API Key');
+  const base = (baseUrl || AI_DEFAULTS.aiBaseUrl).replace(/\/+$/, '');
+  const resp = await fetch(`${base}/user/balance`, {
+    headers: { 'Authorization': `Bearer ${apiKey}` }
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  const info = (data.balance_infos || [])[0] || {};
+  return {
+    isAvailable: data.is_available !== false,
+    total: info.total_balance,
+    granted: info.granted_balance,
+    toppedUp: info.topped_up_balance,
+    currency: info.currency || ''
+  };
+}
+
 // ============ Time Formatting ============
 function fmtTime(ts) {
   const d = new Date(ts * 1000);

@@ -8,6 +8,7 @@ let activePort = null;   // 当前连接的前端端口（popup），可为 null
 let running = false;     // 是否有任务在执行
 let cancelled = false;   // 取消标记
 let currentAbort = null; // 当前请求的 AbortController
+let aiAbort = null;      // AI 流式请求的 AbortController
 
 // ============ Settings ============
 let devMode = false;
@@ -23,7 +24,9 @@ function send(type, data = {}) {
   }
 }
 
-function progress(msg) { send('progress', { message: msg }); }
+function progress(msg, percent) {
+  send('progress', { message: msg, percent });
+}
 function info(msg) { send('info', { message: msg }); }
 function success(msg) { send('success', { message: msg }); }
 function error(msg) { send('error', { message: msg }); }
@@ -138,6 +141,26 @@ async function fetchDanmaku(cid, cookie) {
   return dms;
 }
 
+// ============ UP 主信息 ============
+async function fetchUpInfo(mid, cookie) {
+  const data = await biliFetchJSON(
+    `https://api.bilibili.com/x/web-interface/card?mid=${mid}`,
+    { cookie }
+  );
+  const c = data.card || {};
+  return {
+    mid,
+    name: c.name || '',
+    face: c.face || '',
+    fans: c.fans ?? null,
+    following: c.attention ?? null,
+    archives: data.archive_count ?? null,
+    sign: c.sign || '',
+    level: c.level_info?.current_level ?? null,
+    official: c.official?.title || ''
+  };
+}
+
 // ============ Comments ============
 function buildQueryString(params) {
   return Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
@@ -149,13 +172,13 @@ async function getSignedParams(params) {
   return encryptWbi(params, mixKey);
 }
 
-// Cursor-based API (x/v2/comment/main) - newer, may require auth/signing
+// Cursor-based API (x/v2/reply/main) - 现行主流评论接口
 async function fetchCommentPageCursor(aid, cursor, cookie) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const params = { type: 1, oid: aid, mode: 3 };
     if (cursor) params.next = cursor;
     if (attempt === 1) Object.assign(params, await getSignedParams(params));
-    const url = `https://api.bilibili.com/x/v2/comment/main?${buildQueryString(params)}`;
+    const url = `https://api.bilibili.com/x/v2/reply/main?${buildQueryString(params)}`;
     try {
       return await biliFetchJSON(url, { cookie });
     } catch (e) {
@@ -165,11 +188,11 @@ async function fetchCommentPageCursor(aid, cursor, cookie) {
   }
 }
 
-// Page-based API (x/v2/comment) - older but more permissive
+// Page-based API (x/v2/reply) - 备用翻页接口
 async function fetchCommentPageByPage(aid, pageNum, cookie) {
   const params = { type: 1, oid: aid, pn: pageNum, sort: 2 };
   const signed = await getSignedParams(params);
-  const url = `https://api.bilibili.com/x/v2/comment?${buildQueryString(signed)}`;
+  const url = `https://api.bilibili.com/x/v2/reply?${buildQueryString(signed)}`;
   const data = await biliFetchJSON(url, { cookie });
   return {
     replies: data.replies || [],
@@ -190,7 +213,7 @@ async function fetchReplies(aid, rpid, rcount, cookie) {
     if (cancelled) throw new Error('CANCELLED');
     try {
       const data = await biliFetchJSON(
-        `https://api.bilibili.com/x/v2/comment/reply?type=1&oid=${aid}&root=${rpid}&ps=${PS}&pn=${page}`,
+        `https://api.bilibili.com/x/v2/reply/reply?type=1&oid=${aid}&root=${rpid}&ps=${PS}&pn=${page}`,
         { cookie }
       );
       const replies = data.replies || [];
@@ -244,7 +267,7 @@ async function fetchSubtitle(cid, videoData, cookie) {
     } catch (e) { }
   }
 
-  if (!subs || subs.length === 0) return [];
+  if (!subs || subs.length === 0) return null;
   return await downloadSubtitle(subs, cookie);
 }
 
@@ -325,6 +348,73 @@ async function handleDanmaku(bvid, cid, params) {
 
   send('file', { task: 'danmaku', filename: `${filenameBase}.${fmt}`, content, mimeType });
   success(`✅ 弹幕完成: ${dms.length} 条`);
+
+  // 弹幕热词
+  if (params.wordCloud && !cancelled) {
+    const words = danmakuWordCloud(dms, params.cloudTopN || 30);
+    send('cloud', { bvid, words });
+    if (words.length > 0) {
+      send('file', {
+        task: 'cloud',
+        filename: `cloud_${bvid}.json`,
+        content: genJSON(words),
+        mimeType: 'application/json'
+      });
+      success(`☁️ 热词完成: ${words.length} 个`);
+    } else {
+      progress('☁️ 无足够弹幕文本生成热词');
+    }
+  }
+
+  // AI 弹幕分析（流式）
+  if (params.aiDanmaku && !cancelled) {
+    try {
+      const aiCfg = await getStoredSettings();
+      const text = buildDanmakuText(dms, aiCfg.aiDanmakuMaxItems || 500);
+      if (!text) {
+        progress('🤖 [AI弹幕] 无弹幕可分析');
+      } else {
+        progress('🤖 AI 正在分析弹幕（流式输出）...');
+        aiAbort = new AbortController();
+        const prompt = aiCfg.aiDanmakuPrompt || AI_DEFAULTS.aiDanmakuPrompt;
+        const analysis = await aiStream(text, prompt, aiCfg, (chunk, full) => {
+          if (cancelled) { aiAbort.abort(); return; }
+          send('ai-dm', { bvid, partial: full, done: false });
+        }, aiAbort.signal);
+        if (cancelled || !analysis) return;
+        send('ai-dm', { bvid, partial: analysis, done: true });
+        send('file', {
+          task: 'analysis',
+          filename: `analysis_${bvid}.md`,
+          content: analysis,
+          mimeType: 'text/markdown'
+        });
+        if (aiCfg.aiSaveJson !== false) {
+          send('file', {
+            task: 'analysis-json',
+            filename: `analysis_${bvid}.json`,
+            content: genJSON({
+              bvid,
+              danmaku_count: dms.length,
+              analyzed_lines: text.split('\n').length,
+              generated_at: new Date().toISOString(),
+              analysis
+            }),
+            mimeType: 'application/json'
+          });
+        }
+        success('🤖 AI 弹幕分析完成');
+      }
+    } catch (e) {
+      if (e.name === 'AbortError' || e.message === 'CANCELLED' || cancelled) {
+        error('⛔ AI 弹幕分析已取消');
+      } else {
+        error(`🤖 AI 弹幕分析失败: ${e.message}`);
+      }
+    } finally {
+      aiAbort = null;
+    }
+  }
 }
 
 // ============ Task: Comments ============
@@ -449,7 +539,10 @@ async function handleSubtitle(bvid, cid, videoData, params) {
   const lanCode = params.subLan;
 
   const result = await fetchSubtitle(cid, videoData, params.cookie);
-  if (!result) return;
+  if (!result) {
+    error('❌ 该视频没有字幕');
+    return;
+  }
   const { body: subs, lan } = result;
   if (cancelled) return;
 
@@ -480,58 +573,129 @@ async function handleSubtitle(bvid, cid, videoData, params) {
 
   send('file', { task: 'subtitle', filename: `${filenameBase}.${fmt}`, content, mimeType });
   success(`✅ 字幕完成: ${subs.length} 条`);
+
+  // AI 字幕总结（流式 + 结构化输出）
+  if (params.aiSummary && !cancelled) {
+    try {
+      const aiCfg = await getStoredSettings();
+      progress('🤖 AI 正在总结字幕（流式输出）...');
+
+      let finalText = '';
+      aiAbort = new AbortController();
+      const summaryPromise = aiCfg.aiStream === false
+        ? aiSummarize(subs, aiCfg).then(t => { finalText = t; return t; })
+        : aiSummarizeStream(subs, aiCfg, (chunk, full) => {
+          if (cancelled) { aiAbort.abort(); return; }
+          finalText = full;
+          send('summary', { bvid, lan, partial: full, done: false });
+        }, aiAbort.signal);
+
+      const summary = await summaryPromise;
+      if (cancelled || !summary) return;
+
+      finalText = summary;
+      send('summary', { bvid, lan, partial: summary, done: true });
+      send('file', {
+        task: 'summary',
+        filename: `summary_${bvid}_${lan}.md`,
+        content: summary,
+        mimeType: 'text/markdown'
+      });
+
+      // 结构化 JSON：标题/UP主/摘要等（可设置开关）
+      if (aiCfg.aiSaveJson !== false) {
+        const data = videoData.data || {};
+        const structured = {
+          bvid,
+          title: data.title || '',
+          url: `https://www.bilibili.com/video/${bvid}`,
+          up: data.owner?.name || '',
+          up_mid: data.owner?.mid || null,
+          subtitle_lan: lan,
+          subtitle_count: subs.length,
+          generated_at: new Date().toISOString(),
+          summary
+        };
+        send('file', {
+          task: 'summary-json',
+          filename: `summary_${bvid}_${lan}.json`,
+          content: genJSON(structured),
+          mimeType: 'application/json'
+        });
+      }
+      success('🤖 AI 总结完成');
+    } catch (e) {
+      if (e.name === 'AbortError' || e.message === 'CANCELLED' || cancelled) {
+        error('⛔ AI 总结已取消');
+      } else {
+        error(`🤖 AI 总结失败: ${e.message}`);
+      }
+    } finally {
+      aiAbort = null;
+    }
+  }
 }
 
 // ============ Settings ============
-async function loadSettings() {
+async function getStoredSettings() {
   try {
     const s = await chrome.storage.local.get('settings');
-    const cfg = s.settings;
-    if (cfg) { devMode = !!cfg.devMode; return; }
+    if (s.settings) return s.settings;
   } catch (e) { }
   try {
     const s = await chrome.storage.sync.get('settings');
-    const cfg = s.settings || {};
+    return s.settings || {};
+  } catch (e) { }
+  return {};
+}
+
+async function loadSettings() {
+  try {
+    const cfg = await getStoredSettings();
     devMode = !!cfg.devMode;
   } catch (e) { }
 }
 
 // ============ Main Task Orchestrator ============
+// bvidList: 批量列表；单个 bvid 时视为单视频任务
 async function startTask(bvid, params) {
   cancelled = false;
   running = true;
   try { await loadSettings(); } catch (e) { }
 
+  const bvidList = (params.bvidList && params.bvidList.length)
+    ? params.bvidList
+    : [bvid];
+  const total = bvidList.length;
+  const failed = [];
+
   try {
-    // 1. Get video info (needed for all tasks)
-    const videoInfo = await fetchVideoInfo(bvid, params.cookie);
+    for (let i = 0; i < total; i++) {
+      if (cancelled) return;
+      const current = bvidList[i];
+      const percent = Math.round((i / total) * 100);
+      if (total > 1) {
+        progress(`\n▶️ [${i + 1}/${total}] 处理 ${current}`, percent);
+      }
+
+      try {
+        await processOneVideo(current, params, i, total);
+      } catch (e) {
+        if (e.message === 'CANCELLED' || cancelled) throw e;
+        failed.push(`${current} (${e.message})`);
+        error(`❌ ${current} 失败: ${e.message}`);
+      }
+    }
+
     if (cancelled) return;
-    const { aid, cid } = videoInfo;
-
-    // 2. Danmaku
-    if (params.danmaku && !cancelled) {
-      try { await handleDanmaku(bvid, cid, params); }
-      catch (e) { if (e.message !== 'CANCELLED') error(`❌ 弹幕出错: ${e.message}`); }
-    }
-
-    // 3. Subtitle
-    if (params.subtitle && !cancelled) {
-      try { await handleSubtitle(bvid, cid, videoInfo.data, params); }
-      catch (e) { if (e.message !== 'CANCELLED') error(`❌ 字幕出错: ${e.message}`); }
-    }
-
-    // 4. Comments
-    if (params.comments && !cancelled) {
-      progress(`[评论] 开始获取...`);
-      try { await handleComments(bvid, aid, params); }
-      catch (e) { if (e.message !== 'CANCELLED') error(`❌ 评论出错: ${e.message}`); }
-    }
-
-    if (!cancelled) done('全部爬取完成！');
+    const msg = total > 1
+      ? `批量完成 ${total - failed.length}/${total} 个视频${failed.length ? `，失败 ${failed.length} 个` : ''}`
+      : '全部爬取完成！';
+    done(msg);
   } catch (e) {
     if (e.message === 'CANCELLED' || cancelled) {
       error('⛔ 已取消');
-      notify('⛔ 任务已取消', bvid);
+      notify('⛔ 任务已取消', total > 1 ? `已处理 ${bvidList.join(',')}` : bvid);
     } else {
       error(`❌ 出错: ${e.message}`);
       notify('❌ 爬取失败', `${bvid}: ${e.message}`);
@@ -540,6 +704,52 @@ async function startTask(bvid, params) {
   } finally {
     running = false;
     cancelled = false;
+  }
+}
+
+async function processOneVideo(bvid, params, index, total) {
+  // 1. Get video info (needed for all tasks)
+  const videoInfo = await fetchVideoInfo(bvid, params.cookie);
+  if (cancelled) return;
+  const { aid, cid } = videoInfo;
+  const owner = videoInfo.data.owner || {};
+
+  // 2. UP 主信息
+  if (params.upInfo && !cancelled) {
+    try {
+      const up = owner.mid ? await fetchUpInfo(owner.mid, params.cookie) : null;
+      if (up) {
+        send('up', { bvid, up });
+        send('file', {
+          task: 'up',
+          filename: `up_${bvid}.json`,
+          content: genJSON(up),
+          mimeType: 'application/json'
+        });
+        success(`👤 UP主: ${up.name} (粉丝 ${up.fans ?? '?'})`);
+      }
+    } catch (e) {
+      if (e.message !== 'CANCELLED') progress(`  [UP主] 获取失败: ${e.message}`);
+    }
+  }
+
+  // 3. Danmaku
+  if (params.danmaku && !cancelled) {
+    try { await handleDanmaku(bvid, cid, params); }
+    catch (e) { if (e.message !== 'CANCELLED') error(`❌ 弹幕出错: ${e.message}`); }
+  }
+
+  // 4. Subtitle
+  if (params.subtitle && !cancelled) {
+    try { await handleSubtitle(bvid, cid, videoInfo.data, params); }
+    catch (e) { if (e.message !== 'CANCELLED') error(`❌ 字幕出错: ${e.message}`); }
+  }
+
+  // 5. Comments
+  if (params.comments && !cancelled) {
+    progress(`[评论] 开始获取...`);
+    try { await handleComments(bvid, aid, params); }
+    catch (e) { if (e.message !== 'CANCELLED') error(`❌ 评论出错: ${e.message}`); }
   }
 }
 
@@ -554,6 +764,7 @@ chrome.runtime.onConnect.addListener((port) => {
       if (running) { // 已有任务 → 先取消旧的
         cancelled = true;
         if (currentAbort) currentAbort.abort();
+        if (aiAbort) aiAbort.abort();
         await sleep(300);
         cancelled = false;
       }
@@ -561,6 +772,7 @@ chrome.runtime.onConnect.addListener((port) => {
     } else if (msg.action === 'cancel') {
       cancelled = true;
       if (currentAbort) currentAbort.abort();
+      if (aiAbort) aiAbort.abort();
       try { port.postMessage({ type: 'abort', message: '已取消' }); } catch (e) { }
     } else if (msg.action === 'status') {
       try { port.postMessage({ type: 'status', running, cancelled }); } catch (e) { }
@@ -571,6 +783,61 @@ chrome.runtime.onConnect.addListener((port) => {
     if (activePort === port) activePort = null;
     // 注意：popup 关闭不取消任务，任务在后台继续，下载走 chrome.downloads
   });
+});
+
+// ============ Runtime Message（content script 悬浮球等）============
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === 'openOptions') {
+    chrome.runtime.openOptionsPage();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg.action === 'floatScrape') {
+    const bvid = extractBVID(msg.bvid);
+    if (!bvid) {
+      sendResponse({ ok: false, error: '无效 BV 号' });
+      return true;
+    }
+    (async () => {
+      if (running) {
+        cancelled = true;
+        if (currentAbort) currentAbort.abort();
+        if (aiAbort) aiAbort.abort();
+        await sleep(300);
+        cancelled = false;
+      }
+      const mode = msg.mode;
+      let cfg = {};
+      try {
+        const s = await chrome.storage.local.get('settings');
+        cfg = s.settings || {};
+      } catch (e) { }
+      await startTask(bvid, {
+        danmaku: mode !== 'cm',
+        comments: mode === 'cm',
+        subtitle: mode !== 'cm',
+        aiSummary: mode === 'ai',
+        aiDanmaku: mode === 'ai',
+        wordCloud: false,
+        upInfo: false,
+        withReplies: false,
+        maxPages: mode === 'cm' ? (cfg.defaultMaxPages || 3) : 0,
+        subLan: cfg.defaultSubLan || 'ai-zh',
+        saveFormat: cfg.defaultFormat || 'json',
+        cookie: '',
+        subtitleTimeFormat: cfg.subtitleTimeFormat || 'seconds',
+        cloudTopN: cfg.cloudTopN || 30
+      });
+    })();
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
+});
+
+// 通知点击 → 打开下载目录
+chrome.notifications.onClicked.addListener(() => {
+  try { chrome.downloads.showDefaultFolder(); } catch (e) { }
 });
 
 // ============ Context Menu (right-click) ============
@@ -590,6 +857,13 @@ chrome.runtime.onInstalled.addListener(() => {
     documentUrlPatterns: ['*://*.bilibili.com/*'],
     targetUrlPatterns: ['*://*.bilibili.com/video/*']
   });
+  chrome.contextMenus.create({
+    id: 'scrape-bilibili-ai',
+    title: '🤖 AI 全分析（弹幕+字幕+总结）',
+    contexts: ['link', 'page'],
+    documentUrlPatterns: ['*://*.bilibili.com/*'],
+    targetUrlPatterns: ['*://*.bilibili.com/video/*']
+  });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -601,6 +875,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (running) { // 已有任务 → 先取消旧的
     cancelled = true;
     if (currentAbort) currentAbort.abort();
+    if (aiAbort) aiAbort.abort();
     await sleep(300);
     cancelled = false;
   }
@@ -615,16 +890,20 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 
   const isComments = info.menuItemId === 'scrape-bilibili-cm';
+  const isAI = info.menuItemId === 'scrape-bilibili-ai';
 
   await startTask(bvid, {
     danmaku: !isComments,
     comments: isComments,
     subtitle: !isComments,
+    aiSummary: isAI,
+    aiDanmaku: isAI,
     withReplies: !!cfg.defaultReplies,
     maxPages: isComments ? (cfg.defaultMaxPages || 3) : 0,
     subLan: cfg.defaultSubLan || 'ai-zh',
     saveFormat: cfg.defaultFormat || 'json',
     cookie: '',
-    subtitleTimeFormat: cfg.subtitleTimeFormat || 'seconds'
+    subtitleTimeFormat: cfg.subtitleTimeFormat || 'seconds',
+    cloudTopN: cfg.cloudTopN || 30
   });
 });

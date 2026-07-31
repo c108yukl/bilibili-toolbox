@@ -7,9 +7,9 @@
 ├── bilibili/            # Python SDK（可 pip install）
 ├── cli.py               # 命令行入口
 ├── app.py               # Streamlit 网页版入口 (streamlit run app.py)
-├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3)
+├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v2.4.0)
 ├── tests/               # pytest 测试
-└── bak/                 # 旧版本备份（已忽略）
+└── bak/                 # 旧版本备份 / 打包产物（已忽略）
 ```
 
 > 已废弃：`bilibili_demo.py` 旧版单文件原型已移入 `bak/`，功能全部由 SDK 替代。
@@ -55,14 +55,16 @@ asyncio.run(main())
 
 `pip install -e .` 后即可作为包导入。
 
-### 方式 4：Edge 浏览器扩展
+### 方式 4：Edge 浏览器扩展（主包，v2.4.0）
 
 1. 打开 `edge://extensions/` → 开启"开发人员模式"
 2. 点"加载解压缩的扩展"→ 选择 `bilibili-extension--main/` 目录
 3. 在 B 站视频页点击扩展图标 → 自动识别 BV 号 → 选择任务 → 开始爬取
-4. 也可在视频链接上**右键**直接抓取（弹幕+字幕 或 评论），完成后有桌面通知
+4. 也可在视频链接上**右键**直接抓取，或使用页面右下角的**悬浮球**快捷抓取
 
-扩展特性：自动读取浏览器 Cookie、后台运行（关闭弹窗不中断任务）、字幕语言选择、右键菜单、一键复制/下载。
+扩展特性：弹幕/评论/字幕/热词/UP主信息/批量抓取、AI 字幕总结与弹幕分析（DeepSeek 流式输出、模型自动获取、余额查询）、悬浮球、5 套主题色、合成音效、后台运行、自动 Cookie、一键复制/下载、设置备份导入导出。
+
+详细说明见 `bilibili-extension--main/README.md`。
 
 ---
 
