@@ -16,20 +16,22 @@ import logging
 import sys
 
 
-def _ensure_utf8_stdout():
-    """仅当控制台编码非 UTF-8 时包装 stdout，避免中文乱码。
+def _ensure_utf8_stream(stream):
+    """仅当流编码非 UTF-8 时包装，避免中文乱码。
 
-    加 encoding/hasattr 双保险，避免在 pytest 等环境（stdout 已是 UTF-8 包装）下误替换。
+    加 encoding/hasattr 双保险，避免在 pytest 等环境（已是 UTF-8 包装）下误替换。
     """
     try:
-        enc = getattr(sys.stdout, "encoding", None)
-        if (enc is None or "utf" not in enc.lower()) and hasattr(sys.stdout, "buffer"):
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        enc = getattr(stream, "encoding", None)
+        if (enc is None or "utf" not in enc.lower()) and hasattr(stream, "buffer"):
+            return io.TextIOWrapper(stream.buffer, encoding="utf-8", errors="replace")
     except Exception:
         pass
+    return stream
 
 
-_ensure_utf8_stdout()
+sys.stdout = _ensure_utf8_stream(sys.stdout)
+sys.stderr = _ensure_utf8_stream(sys.stderr)
 
 from bilibili import (
     extract_bvid,
@@ -87,9 +89,13 @@ def _subtitle_fmt(save_fmt: str) -> str:
     return _SUBTITLE_FMT_MAP.get(save_fmt, save_fmt) if save_fmt else "srt"
 
 
-async def main():
+async def main() -> int:
     args = parse_args()
-    bvid = extract_bvid(args.bvid)
+    try:
+        bvid = extract_bvid(args.bvid)
+    except ValueError as e:
+        logging.error("%s", e)
+        return 2
     credential = parse_cookie(args.cookie)
     max_age = 0 if args.no_cache else args.max_age
 
@@ -110,11 +116,14 @@ async def main():
         do_comments = True
         do_subtitle = True
 
+    failed = False
+
     if do_danmaku:
         try:
             await get_danmaku(bvid, max_age=max_age, credential=credential, save_fmt=args.save)
         except Exception as e:
             logging.error("[弹幕] 失败: %s", e)
+            failed = True
 
     if do_subtitle:
         try:
@@ -127,6 +136,7 @@ async def main():
             )
         except Exception as e:
             logging.error("[字幕] 失败: %s（部分视频字幕需要登录 Cookie，请加 --cookie）", e)
+            failed = True
 
     if do_comments or args.all_pages:
         try:
@@ -150,15 +160,26 @@ async def main():
                 )
         except Exception as e:
             logging.error("[评论] 失败: %s", e)
+            failed = True
 
     logging.info("[完成] 输出目录: %s", config.OUTPUT_DIR)
     if max_age > 0:
         logging.info("[缓存] %s", config.CACHE_DIR)
+    return 1 if failed else 0
 
 
-if __name__ == "__main__":
+def run() -> int:
+    """console script 入口（pyproject: bili = "cli:run"）"""
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL, logging.INFO),
         format="%(message)s",
     )
-    asyncio.run(main())
+    try:
+        return asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.error("[中断] 用户取消")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(run())

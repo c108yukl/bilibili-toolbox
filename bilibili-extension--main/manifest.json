@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "B站数据爬取工具",
-  "version": "2.4.0",
+  "version": "1.0.0",
   "description": "一键获取B站视频的弹幕、评论、字幕（AI总结·热词·批量·悬浮球）",
   "permissions": ["storage", "downloads", "activeTab", "tabs", "cookies", "contextMenus", "notifications"],
   "host_permissions": ["*://*.bilibili.com/*", "*://*.hdslb.com/*"],

@@ -7,7 +7,7 @@
 ├── bilibili/            # Python SDK（可 pip install）
 ├── cli.py               # 命令行入口
 ├── app.py               # Streamlit 网页版入口 (streamlit run app.py)
-├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v2.4.0)
+├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.0.0)
 ├── tests/               # pytest 测试
 └── bak/                 # 旧版本备份 / 打包产物（已忽略）
 ```
@@ -55,7 +55,7 @@ asyncio.run(main())
 
 `pip install -e .` 后即可作为包导入。
 
-### 方式 4：Edge 浏览器扩展（主包，v2.4.0）
+### 方式 4：Edge 浏览器扩展（主包，v1.0.0）
 
 1. 打开 `edge://extensions/` → 开启"开发人员模式"
 2. 点"加载解压缩的扩展"→ 选择 `bilibili-extension--main/` 目录

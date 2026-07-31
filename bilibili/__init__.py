@@ -20,7 +20,7 @@ from bilibili.danmaku import get_danmaku
 from bilibili.comments import get_comments, get_all_comments
 from bilibili.subtitle import get_subtitle
 
-__version__ = "2.0.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "parse_cookie",
