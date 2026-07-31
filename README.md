@@ -96,6 +96,7 @@ pytest          # 运行测试
 
 ## 五、版权声明
 
-- 本工具仅供学习交流，请勿用于商业用途或高频抓取
+- 本工具以 MIT 协议开源，详见 [LICENSE](LICENSE)
+- 仅供学习交流，请勿用于商业用途或高频抓取
 - B站 API 文档参考 [bilibili-API-collect](https://github.com/pskdje/bilibili-API-collect)
 - Python 侧依赖 [bilibili-api-python](https://github.com/Nemo2011/bilibili-api)

@@ -44,7 +44,8 @@ icons/         扩展图标
 - **WBI 签名**：64 元素查找表混排算法，并做服务器时间校准（wts）
 - **API 降级**：字幕 Player API → 视频信息 → 重拉；评论 cursor → WBI → page 版
 - **大文件下载**：blob URL 方式，规避 data URL 大小限制
-- **AI 总结**：OpenAI 兼容 chat/completions 接口，`{text}` 提示词占位符，Key 存本机
+- **AI 总结**：OpenAI 兼容 chat/completions 接口，`{text}` 提示词占位符；Key 仅存 `chrome.storage.session`（本浏览器会话内，不落盘不同步，重启后需重新输入）
+- **权限收敛**：默认仅申请 bilibili.com 与 hdslb.com（字幕 CDN）宿主权限；使用自定义 AI 服务地址时按需弹窗授权，不再申请全部网站
 - **热词**：中文二元组 + 拉丁词抽取，停用词过滤，纯本地无依赖
 
 > Python 版（SDK/CLI/Web）见仓库根目录 README.md。

@@ -250,12 +250,61 @@ function applyTheme(theme) {
 
 // ============ AI 字幕总结（OpenAI 兼容接口） ============
 const AI_DEFAULTS = {
-  aiApiKey: '',
   aiBaseUrl: 'https://api.deepseek.com',
   aiModel: 'deepseek-chat',
   aiPrompt: '你是视频字幕分析助手。请用中文总结以下视频字幕，输出三部分：\n1. 主题概述（2-3句话）\n2. 核心要点（编号列表）\n3. 亮点金句（如有）\n\n字幕内容：\n{text}',
   aiDanmakuPrompt: '你是B站弹幕分析助手。请分析以下弹幕（每行一条），用中文输出四部分：\n1. 弹幕情绪倾向（正面/负面/中立的大致占比）\n2. 热议话题（弹幕最关注的几个点）\n3. 名场面 / 高能时刻（被反复刷屏的梗或事件）\n4. 有趣弹幕精选（最多5条）\n\n弹幕内容：\n{text}'
 };
+
+// ============ AI API Key（仅存 chrome.storage.session，浏览器会话级，不落盘不同步） ============
+// 明文 Key 不进 storage.local/sync，避免同步到云端或长期落盘
+async function getAiKey() {
+  try {
+    const s = await chrome.storage.session.get('aiApiKey');
+    if (s.aiApiKey) return s.aiApiKey;
+  } catch (e) { }
+  // 兼容旧版本：从 local/sync 迁移一次后清理
+  for (const area of ['local', 'sync']) {
+    try {
+      const s = await chrome.storage[area].get('settings');
+      if (s.settings && s.settings.aiApiKey) {
+        const key = s.settings.aiApiKey;
+        try { await chrome.storage.session.set({ aiApiKey: key }); } catch (e) { }
+        delete s.settings.aiApiKey;
+        try { await chrome.storage[area].set({ settings: s.settings }); } catch (e) { }
+        return key;
+      }
+    } catch (e) { }
+  }
+  return '';
+}
+
+async function setAiKey(key) {
+  try { await chrome.storage.session.set({ aiApiKey: key || '' }); } catch (e) { }
+}
+
+// 确保对自定义 AI 服务地址有宿主权限（optional_host_permissions）。
+// 需在用户手势下调用（设置页保存/点击）；后台无手势时抛明确错误提示
+async function ensureAiHostPermission(baseUrl) {
+  let origin = null;
+  try { origin = new URL(String(baseUrl || '')).origin + '/*'; } catch (e) { return; }
+  try {
+    if (!await chrome.permissions.contains({ origins: [origin] })) {
+      await chrome.permissions.request({ origins: [origin] });
+    }
+  } catch (e) {
+    throw new Error(`AI 服务地址未授权: ${origin.replace('/*', '')}（请打开设置页，在 AI 配置中保存一次以授权）`);
+  }
+}
+
+// AI 调用统一入口：取 Key + 校验地址权限
+async function resolveAiCfg(cfg) {
+  const merged = { ...AI_DEFAULTS, ...(cfg || {}) };
+  const key = await getAiKey();
+  if (!key) throw new Error('未配置 AI API Key（设置 → AI 总结，仅保存在本浏览器会话）');
+  await ensureAiHostPermission(merged.aiBaseUrl);
+  return { cfg: merged, key };
+}
 
 // 构建发送给 AI 的字幕文本（按设置省 token）
 // aiTextOnly: 仅文本（默认） / 否则带时间戳；aiMaxItems: 条数上限(0=全部)
@@ -274,8 +323,7 @@ function subtitlesToText(subs) {
 }
 
 async function aiSummarize(subs, aiCfg) {
-  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
-  if (!cfg.aiApiKey) throw new Error('未配置 AI API Key（设置 → AI 总结）');
+  const { cfg, key } = await resolveAiCfg(aiCfg);
   const text = buildAIText(subs, cfg);
   const content = cfg.aiPrompt.replace(/\{text\}/g, text);
   const base = cfg.aiBaseUrl.replace(/\/+$/, '');
@@ -283,7 +331,7 @@ async function aiSummarize(subs, aiCfg) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${cfg.aiApiKey}`
+      'Authorization': `Bearer ${key}`
     },
     body: JSON.stringify({
       model: cfg.aiModel || 'deepseek-chat',
@@ -320,8 +368,7 @@ function buildDanmakuText(dms, maxItems = 500) {
 // 流式 AI 调用：text 为已构建文本，prompt 支持 {text} 占位符
 // onChunk(chunk, fullText) 实时回调；signal 用于取消
 async function aiStream(text, prompt, aiCfg, onChunk, signal) {
-  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
-  if (!cfg.aiApiKey) throw new Error('未配置 AI API Key（设置 → AI 总结）');
+  const { cfg, key } = await resolveAiCfg(aiCfg);
   const content = String(prompt || '').replace(/\{text\}/g, text || '');
   const base = cfg.aiBaseUrl.replace(/\/+$/, '');
   const resp = await fetch(`${base}/chat/completions`, {
@@ -329,7 +376,7 @@ async function aiStream(text, prompt, aiCfg, onChunk, signal) {
     signal,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${cfg.aiApiKey}`
+      'Authorization': `Bearer ${key}`
     },
     body: JSON.stringify({
       model: cfg.aiModel || 'deepseek-chat',
@@ -377,8 +424,7 @@ async function aiStream(text, prompt, aiCfg, onChunk, signal) {
 }
 
 async function aiSummarize(subs, aiCfg) {
-  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
-  if (!cfg.aiApiKey) throw new Error('未配置 AI API Key（设置 → AI 总结）');
+  const { cfg, key } = await resolveAiCfg(aiCfg);
   const text = buildAIText(subs, cfg);
   const content = cfg.aiPrompt.replace(/\{text\}/g, text);
   const base = cfg.aiBaseUrl.replace(/\/+$/, '');
@@ -386,7 +432,7 @@ async function aiSummarize(subs, aiCfg) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${cfg.aiApiKey}`
+      'Authorization': `Bearer ${key}`
     },
     body: JSON.stringify({
       model: cfg.aiModel || 'deepseek-chat',
@@ -416,6 +462,7 @@ async function aiSummarizeStream(subs, aiCfg, onChunk, signal) {
 // 获取模型列表（OpenAI 兼容：GET {base}/models）→ 模型 id 数组
 async function fetchModelList(baseUrl, apiKey) {
   if (!apiKey) throw new Error('请先填写 API Key');
+  await ensureAiHostPermission(baseUrl);
   const base = (baseUrl || AI_DEFAULTS.aiBaseUrl).replace(/\/+$/, '');
   const resp = await fetch(`${base}/models`, {
     headers: { 'Authorization': `Bearer ${apiKey}` }
@@ -429,6 +476,7 @@ async function fetchModelList(baseUrl, apiKey) {
 // 查询余额（DeepSeek 等平台支持）
 async function fetchBalance(baseUrl, apiKey) {
   if (!apiKey) throw new Error('请先填写 API Key');
+  await ensureAiHostPermission(baseUrl);
   const base = (baseUrl || AI_DEFAULTS.aiBaseUrl).replace(/\/+$/, '');
   const resp = await fetch(`${base}/user/balance`, {
     headers: { 'Authorization': `Bearer ${apiKey}` }

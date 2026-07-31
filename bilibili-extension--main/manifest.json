@@ -4,7 +4,8 @@
   "version": "2.4.0",
   "description": "一键获取B站视频的弹幕、评论、字幕（AI总结·热词·批量·悬浮球）",
   "permissions": ["storage", "downloads", "activeTab", "tabs", "cookies", "contextMenus", "notifications"],
-  "host_permissions": ["*://*.bilibili.com/*", "https://*/*", "http://*/*"],
+  "host_permissions": ["*://*.bilibili.com/*", "*://*.hdslb.com/*"],
+  "optional_host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
       "matches": ["*://*.bilibili.com/*"],

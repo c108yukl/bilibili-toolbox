@@ -9,7 +9,6 @@ const DEFAULTS = {
   defaultMaxPages: 0,
   subtitleTimeFormat: 'seconds',
   devMode: false,
-  aiApiKey: '',
   aiBaseUrl: 'https://api.deepseek.com',
   aiModel: 'deepseek-chat',
   aiPrompt: '你是视频字幕分析助手。请用中文总结以下视频字幕，输出三部分：\n1. 主题概述（2-3句话）\n2. 核心要点（编号列表）\n3. 亮点金句（如有）\n\n字幕内容：\n{text}',
@@ -194,6 +193,10 @@ async function importSettings() {
   if (!raw) { setImportStatus('⚠️ 请先粘贴 JSON', 'warn'); return; }
   try {
     const parsed = JSON.parse(raw);
+    if (parsed.aiApiKey) {
+      await setAiKey(String(parsed.aiApiKey).trim());
+      delete parsed.aiApiKey;
+    }
     const cfg = { ...DEFAULTS, ...parsed };
     await saveSettings(cfg);
     dirty = false;
@@ -217,7 +220,8 @@ async function load() {
   $('def-sub-lan').value = cfg.defaultSubLan;
   $('def-max-pages').value = cfg.defaultMaxPages;
   $('sub-time-format').value = cfg.subtitleTimeFormat || 'seconds';
-  $('ai-api-key').value = cfg.aiApiKey || '';
+  $('ai-api-key').value = (await getAiKey()) || '';
+  $('ai-api-key').setAttribute('placeholder', '仅保存在本浏览器会话中（浏览器重启后需重新输入）');
   $('ai-base-url').value = cfg.aiBaseUrl || DEFAULTS.aiBaseUrl;
   $('ai-model').value = cfg.aiModel || DEFAULTS.aiModel;
   $('ai-prompt').value = cfg.aiPrompt || DEFAULTS.aiPrompt;
@@ -237,7 +241,7 @@ async function load() {
   $('cloud-top-n').value = cfg.cloudTopN || 30;
   selectTheme(cfg.theme || 'aurora', true);
   await refreshCookieDisplay();
-  if (cfg.aiApiKey) fetchModels();
+  if (await getAiKey()) fetchModels();
 }
 
 // ---- Save settings ----
@@ -252,7 +256,6 @@ async function save() {
     defaultSubLan: $('def-sub-lan').value,
     defaultMaxPages: parseInt($('def-max-pages').value) || 0,
     subtitleTimeFormat: $('sub-time-format').value,
-    aiApiKey: $('ai-api-key').value.trim(),
     aiBaseUrl: $('ai-base-url').value.trim(),
     aiModel: $('ai-model').value.trim(),
     aiPrompt: $('ai-prompt').value.trim(),
@@ -274,6 +277,10 @@ async function save() {
   };
   try {
     await saveSettings(settings);
+    await setAiKey($('ai-api-key').value.trim());
+    if ($('ai-api-key').value.trim() && $('ai-base-url').value.trim()) {
+      await ensureAiHostPermission($('ai-base-url').value.trim());
+    }
     dirty = false;
     const msg = $('msg');
     msg.textContent = '✅ 已保存';
