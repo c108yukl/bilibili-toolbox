@@ -37,6 +37,11 @@
       background: transparent; color: #ccc; font-size: 14px; cursor: pointer; margin-top: 6px;
     }
     .btn-cancel:hover { background: #2a2a3e; }
+    .btn-cookie {
+      padding: 5px 12px; border: 1px solid #555; border-radius: 6px;
+      background: transparent; color: #ccc; font-size: 12px; cursor: pointer;
+    }
+    .btn-cookie:hover { background: #2a2a3e; }
     .log-box {
       background: #0a0a14; border: 1px solid #222; border-radius: 6px;
       padding: 10px; height: 180px; overflow-y: auto; font-family: 'Cascadia Code', 'Consolas', monospace;
@@ -64,7 +69,7 @@
   </style>
 </head>
 <body>
-  <h1>🔍 B站数据爬取工具 <span style="flex:1"></span> <a id="btn-settings" href="#" title="设置" style="color:#666;text-decoration:none;font-size:18px">⚙️</a></h1>
+  <h1>🔍 B站数据爬取工具 <small id="version-tag">v2.0.1</small> <span style="flex:1"></span> <a id="btn-settings" href="#" title="设置" style="color:#666;text-decoration:none;font-size:18px">⚙️</a></h1>
 
   <div class="section">
     <label for="bvid">视频链接 / BV 号</label>
@@ -109,7 +114,11 @@
   <div class="section">
     <label for="cookie">Cookie（选填，访问私密视频或提高限额）</label>
     <input type="password" id="cookie" placeholder="SESSDATA=xxx; bili_jct=yyy" />
-    <div class="hint">留空则只访问公开数据</div>
+    <div class="hint" id="cookie-hint"></div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn-cookie" id="btn-read-cookie" title="从浏览器读取当前B站登录Cookie并填入">🍪 读取Cookie</button>
+      <span class="hint" style="line-height:26px" id="cookie-status"></span>
+    </div>
   </div>
 
   <button class="btn-start" id="btn-start">🚀 开始爬取</button>

@@ -1,23 +1,24 @@
 importScripts('utils.js');
 
+// 启动时校准服务器时间（用于 WBI wts）
+syncServerTime();
+
 // ============ State ============
-let currentPort = null;
-let cancelled = false;
+let activePort = null;   // 当前连接的前端端口（popup），可为 null（headless）
+let running = false;     // 是否有任务在执行
+let cancelled = false;   // 取消标记
+let currentAbort = null; // 当前请求的 AbortController
 
-// ============ Helper: send message / headless download ============
-async function downloadFile(filename, content, mimeType) {
-  try {
-    const dataUrl = `data:${mimeType};charset=utf-8,${encodeURIComponent(content)}`;
-    await chrome.downloads.download({ url: dataUrl, filename, conflictAction: 'overwrite' });
-  } catch (e) {
-    console.error('[下载] 失败:', filename, e.message);
-  }
-}
+// ============ Settings ============
+let devMode = false;
+function devLog(...args) { if (devMode) console.log('[dev]', ...args); }
 
-function send(type, data) {
-  if (currentPort) {
-    try { currentPort.postMessage({ type, ...data }); } catch (e) { }
+// ============ Messaging ============
+function send(type, data = {}) {
+  if (activePort) {
+    try { activePort.postMessage({ type, ...data }); } catch (e) { }
   } else if (type === 'file') {
+    // headless（右键菜单 / popup 已关闭）：直接触发浏览器下载
     downloadFile(data.filename, data.content, data.mimeType);
   }
 }
@@ -26,19 +27,49 @@ function progress(msg) { send('progress', { message: msg }); }
 function info(msg) { send('info', { message: msg }); }
 function success(msg) { send('success', { message: msg }); }
 function error(msg) { send('error', { message: msg }); }
-function done(msg) {
-  if (currentPort) send('done', { message: msg });
-  // headless: no notification needed, downloads speak for themselves
+
+async function notify(title, message) {
+  if (!activePort) { // headless（右键菜单 / popup 已关闭）时用桌面通知
+    try {
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title,
+        message
+      });
+    } catch (e) { }
+  }
 }
 
-// Developer logging (toggled by settings)
-let devMode = false;
-function devLog(...args) { if (devMode) console.log('[dev]', ...args); }
+function done(msg) {
+  send('done', { message: msg });
+  notify('✅ 爬取完成', msg);
+}
 
-// ============ Fetch wrapper ============
+// ============ Download ============
+async function downloadFile(filename, content, mimeType) {
+  let url = null;
+  try {
+    url = URL.createObjectURL(new Blob([content], { type: mimeType }));
+  } catch (e) {
+    url = `data:${mimeType};charset=utf-8,${encodeURIComponent(content)}`;
+  }
+  try {
+    await chrome.downloads.download({ url, filename, conflictAction: 'uniquify' });
+  } catch (e) {
+    console.error('[下载] 失败:', filename, e.message);
+    error(`❌ 下载失败: ${filename}`);
+  }
+  if (url && url.startsWith('blob:')) {
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+}
+
+// ============ Fetch wrapper (timeout + cancellable) ============
 async function biliFetch(url, options = {}) {
   if (cancelled) throw new Error('CANCELLED');
   if (!url || url === 'https:' || url === 'http:') throw new Error(`无效URL: ${url}`);
+
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': 'https://www.bilibili.com/',
@@ -47,9 +78,23 @@ async function biliFetch(url, options = {}) {
     'Accept-Language': 'zh-CN,zh;q=0.9',
   };
   if (options.cookie) headers['Cookie'] = options.cookie;
-  const resp = await fetch(url, { headers, ...options.fetchOpts });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-  return resp;
+
+  const controller = new AbortController();
+  currentAbort = controller;
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const resp = await fetch(url, { headers, signal: controller.signal, ...(options.fetchOpts || {}) });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    return resp;
+  } catch (e) {
+    if (cancelled) throw new Error('CANCELLED');
+    if (e.name === 'AbortError') throw new Error(`请求超时: ${url}`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (currentAbort === controller) currentAbort = null;
+  }
 }
 
 async function biliFetchJSON(url, options = {}) {
@@ -57,6 +102,10 @@ async function biliFetchJSON(url, options = {}) {
   const data = await resp.json();
   if (data.code !== 0) throw new Error(`API错误(${data.code}): ${data.message || '未知'}`);
   return data.data;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ============ Video Info ============
@@ -94,18 +143,19 @@ function buildQueryString(params) {
   return Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
 }
 
+async function getSignedParams(params) {
+  const keys = await getWbiKeys();
+  const mixKey = getMixKey(keys.img, keys.sub);
+  return encryptWbi(params, mixKey);
+}
+
 // Cursor-based API (x/v2/comment/main) - newer, may require auth/signing
 async function fetchCommentPageCursor(aid, cursor, cookie) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const params = { type: 1, oid: aid, mode: 3 };
     if (cursor) params.next = cursor;
-    let url = `https://api.bilibili.com/x/v2/comment/main?${buildQueryString(params)}`;
-    if (attempt === 1) {
-      const keys = await getWbiKeys();
-      const mixKey = getMixKey(keys.img, keys.sub);
-      Object.assign(params, encryptWbi(params, mixKey));
-      url = `https://api.bilibili.com/x/v2/comment/main?${buildQueryString(params)}`;
-    }
+    if (attempt === 1) Object.assign(params, await getSignedParams(params));
+    const url = `https://api.bilibili.com/x/v2/comment/main?${buildQueryString(params)}`;
     try {
       return await biliFetchJSON(url, { cookie });
     } catch (e) {
@@ -117,10 +167,8 @@ async function fetchCommentPageCursor(aid, cursor, cookie) {
 
 // Page-based API (x/v2/comment) - older but more permissive
 async function fetchCommentPageByPage(aid, pageNum, cookie) {
-  const keys = await getWbiKeys();
-  const mixKey = getMixKey(keys.img, keys.sub);
   const params = { type: 1, oid: aid, pn: pageNum, sort: 2 };
-  const signed = encryptWbi(params, mixKey);
+  const signed = await getSignedParams(params);
   const url = `https://api.bilibili.com/x/v2/comment?${buildQueryString(signed)}`;
   const data = await biliFetchJSON(url, { cookie });
   return {
@@ -133,29 +181,38 @@ async function fetchCommentPageByPage(aid, pageNum, cookie) {
   };
 }
 
-async function fetchReplies(aid, rpid, cookie) {
-  try {
-    return await biliFetchJSON(
-      `https://api.bilibili.com/x/v2/comment/reply?type=1&oid=${aid}&root=${rpid}&ps=20`,
-      { cookie }
-    );
-  } catch (e) {
-    return { replies: [] };
+// 楼中楼回复翻页取全
+async function fetchReplies(aid, rpid, rcount, cookie) {
+  const results = [];
+  const PS = 20;
+  const totalPages = Math.min(Math.ceil((rcount || 0) / PS), 20);
+  for (let page = 1; page <= totalPages; page++) {
+    if (cancelled) throw new Error('CANCELLED');
+    try {
+      const data = await biliFetchJSON(
+        `https://api.bilibili.com/x/v2/comment/reply?type=1&oid=${aid}&root=${rpid}&ps=${PS}&pn=${page}`,
+        { cookie }
+      );
+      const replies = data.replies || [];
+      results.push(...replies);
+      if (replies.length < PS) break;
+      await sleep(200);
+    } catch (e) {
+      if (e.message === 'CANCELLED') throw e;
+      break; // 单页失败则返回已获取部分
+    }
   }
+  return results;
 }
 
 // ============ Subtitle ============
-// Player API: the only endpoint that returns valid subtitle_url
 async function fetchPlayerSubtitle(aid, cid, cookie) {
   try {
-    const keys = await getWbiKeys();
-    const mixKey = getMixKey(keys.img, keys.sub);
     const params = { aid, cid, isGaiaAvoided: false, web_location: 1315873 };
-    const signed = encryptWbi(params, mixKey);
+    const signed = await getSignedParams(params);
     const url = `https://api.bilibili.com/x/player/wbi/v2?${buildQueryString(signed)}`;
     devLog('[字幕] Player API URL:', url);
     const data = await biliFetchJSON(url, { cookie });
-    devLog('[字幕] Player API响应:', JSON.stringify(data.subtitle).slice(0, 200));
     return data.subtitle?.subtitles || [];
   } catch (e) {
     devLog('[字幕] Player API失败:', e.message);
@@ -184,29 +241,41 @@ async function fetchSubtitle(cid, videoData, cookie) {
         { cookie }
       );
       subs = info.subtitle?.subtitles || info.subtitle?.list || [];
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (!subs || subs.length === 0) return [];
   return await downloadSubtitle(subs, cookie);
 }
 
-async function downloadSubtitle(subtitles, cookie) {
-  // Build candidate list: prefer ai-zh > zh-Hans > zh-Hant, then everything else
+// 按用户选择的语言排序候选：所选语言优先，其次 ai-zh > zh-Hans > zh-Hant，最后其余
+function buildSubtitleCandidates(subtitles, lanCode) {
   const prefer = ['ai-zh', 'zh-Hans', 'zh-Hant'];
-  const candidates = [];
+  const ordered = [];
   const seen = new Set();
+  const push = s => {
+    if (!s || seen.has(s.lan)) return;
+    seen.add(s.lan);
+    ordered.push(s);
+  };
+  if (lanCode) {
+    const exact = subtitles.find(s => s.lan === lanCode);
+    if (exact) push(exact);
+  }
   for (const p of prefer) {
-    const s = subtitles.find(x => x.lan === p);
-    if (s && !seen.has(s.lan)) { candidates.push(s); seen.add(s.lan); }
+    if (p === lanCode) continue;
+    push(subtitles.find(s => s.lan === p));
   }
-  for (const s of subtitles) {
-    if (!seen.has(s.lan)) { candidates.push(s); seen.add(s.lan); }
-  }
+  for (const s of subtitles) push(s);
+  return ordered;
+}
+
+async function downloadSubtitle(subtitles, cookie, lanCode) {
+  const candidates = buildSubtitleCandidates(subtitles, lanCode);
 
   for (const picked of candidates) {
     if (!picked.subtitle_url) {
-      devLog(`[字幕] 跳过 ${picked.lan_doc||picked.lan} (URL为空)`);
+      devLog(`[字幕] 跳过 ${picked.lan_doc || picked.lan} (URL为空)`);
       continue;
     }
     let url = picked.subtitle_url;
@@ -217,20 +286,20 @@ async function downloadSubtitle(subtitles, cookie) {
       const data = await resp.json();
       const body = data.body || [];
       if (body.length > 0) {
-        progress(`[字幕] 成功获取: ${picked.lan_doc||picked.lan} (${body.length}条)`);
-        return body;
+        progress(`[字幕] 成功获取: ${picked.lan_doc || picked.lan} (${body.length}条)`);
+        return { body, lan: picked.lan };
       }
-      devLog(`[字幕] ${picked.lan_doc||picked.lan} 内容为空，尝试下一个`);
+      devLog(`[字幕] ${picked.lan_doc || picked.lan} 内容为空，尝试下一个`);
     } catch (e) {
-      progress(`  [字幕] ${picked.lan_doc||picked.lan} 下载失败，尝试下一个...`);
+      progress(`  [字幕] ${picked.lan_doc || picked.lan} 下载失败，尝试下一个...`);
     }
   }
   error('❌ 该视频没有可下载的字幕文件');
-  return [];
+  return null;
 }
 
 // ============ Task: Danmaku ============
-async function handleDanmaku(bvid, aid, cid, params) {
+async function handleDanmaku(bvid, cid, params) {
   const fmt = params.saveFormat;
   const dms = await fetchDanmaku(cid, params.cookie);
   if (cancelled) return;
@@ -271,7 +340,7 @@ async function handleComments(bvid, aid, params) {
   let emptyStreak = 0;
   let page = 1;
   let knownTotal = 0;
-  let usingPageApi = false; // once we fallback to page-based, stick with it
+  let usingPageApi = false; // 一旦降级到 page 接口就保持使用
 
   while (true) {
     if (cancelled) return;
@@ -280,15 +349,15 @@ async function handleComments(bvid, aid, params) {
 
     let data;
     if (usingPageApi) {
-      data = await fetchCommentPageByPage(aid, cursor || page, params.cookie);
+      data = await fetchCommentPageByPage(aid, page, params.cookie);
     } else {
       try {
         data = await fetchCommentPageCursor(aid, cursor, params.cookie);
       } catch (e) {
+        if (cancelled) return;
         progress(`  [评论] 主流API被风控，切换备用接口...`);
-        data = await fetchCommentPageByPage(aid, cursor || 1, params.cookie);
+        data = await fetchCommentPageByPage(aid, page, params.cookie);
         usingPageApi = true;
-        cursor = page; // reset cursor to page number
       }
     }
     if (cancelled) return;
@@ -307,9 +376,8 @@ async function handleComments(bvid, aid, params) {
         if (cancelled) return;
         let subReplies = [];
         if (withReplies && (c.rcount || 0) > 0) {
-          const subData = await fetchReplies(aid, c.rpid, params.cookie);
-          subReplies = subData.replies || [];
-          await sleep(300);
+          subReplies = await fetchReplies(aid, c.rpid, c.rcount, params.cookie);
+          await sleep(150);
         }
         allItems.push({ comment: c, replies: subReplies });
         replyCount += subReplies.length;
@@ -320,13 +388,14 @@ async function handleComments(bvid, aid, params) {
     if (cursorData.is_end) { progress(`  已到最后一页`); break; }
     if (knownTotal && allItems.length >= knownTotal) { progress(`  已获取全部 ${knownTotal} 条`); break; }
 
-    cursor = cursorData.next;
-    if (!cursor) break;
+    if (usingPageApi) {
+      cursor = page + 1;
+    } else {
+      cursor = cursorData.next;
+      if (!cursor) break;
+    }
     page++;
-
-    if (usingPageApi) cursor = page; // for page API, cursor IS the next page number
-
-    await sleep(500);
+    await sleep(400);
   }
 
   if (cancelled) return;
@@ -345,10 +414,10 @@ async function handleComments(bvid, aid, params) {
     const rows = [];
     for (const item of formatted) {
       rows.push({ level: 'comment', like: item.like, uname: item.uname, time: item.time,
-                  text: item.text, reply_count: item.reply_count, reply_to: '', rpid: item.rpid });
+        text: item.text, reply_count: item.reply_count, reply_to: '', rpid: item.rpid });
       for (const r of item.replies) {
         rows.push({ level: 'reply', like: r.like, uname: r.uname, time: r.time,
-                    text: r.text, reply_count: '', reply_to: r.reply_to, rpid: r.rpid });
+          text: r.text, reply_count: '', reply_to: r.reply_to, rpid: r.rpid });
       }
     }
     content = genCSV(rows, [
@@ -375,19 +444,17 @@ async function handleComments(bvid, aid, params) {
 }
 
 // ============ Task: Subtitle ============
-async function handleSubtitle(bvid, aid, cid, videoData, params) {
+async function handleSubtitle(bvid, cid, videoData, params) {
   const fmt = params.saveFormat;
   const lanCode = params.subLan;
 
-  const subs = await fetchSubtitle(cid, videoData, params.cookie);
-  if (!subs || subs.length === 0) {
-    error('❌ 该视频没有字幕');
-    return;
-  }
+  const result = await fetchSubtitle(cid, videoData, params.cookie);
+  if (!result) return;
+  const { body: subs, lan } = result;
   if (cancelled) return;
 
   progress(`[字幕] 共 ${subs.length} 条字幕片段`);
-  const filenameBase = `subtitle_${bvid}_${lanCode}`;
+  const filenameBase = `subtitle_${bvid}_${lan}`;
   const useFullTime = params.subtitleTimeFormat === 'full';
   let content, mimeType;
 
@@ -415,19 +482,25 @@ async function handleSubtitle(bvid, aid, cid, videoData, params) {
   success(`✅ 字幕完成: ${subs.length} 条`);
 }
 
-// Load user settings from storage
+// ============ Settings ============
 async function loadSettings() {
+  try {
+    const s = await chrome.storage.local.get('settings');
+    const cfg = s.settings;
+    if (cfg) { devMode = !!cfg.devMode; return; }
+  } catch (e) { }
   try {
     const s = await chrome.storage.sync.get('settings');
     const cfg = s.settings || {};
     devMode = !!cfg.devMode;
-  } catch (e) {}
+  } catch (e) { }
 }
 
 // ============ Main Task Orchestrator ============
 async function startTask(bvid, params) {
   cancelled = false;
-  await loadSettings();
+  running = true;
+  try { await loadSettings(); } catch (e) { }
 
   try {
     // 1. Get video info (needed for all tasks)
@@ -437,82 +510,66 @@ async function startTask(bvid, params) {
 
     // 2. Danmaku
     if (params.danmaku && !cancelled) {
-      try {
-        await handleDanmaku(bvid, aid, cid, params);
-      } catch (e) {
-        error(`❌ 弹幕出错: ${e.message}`);
-      }
+      try { await handleDanmaku(bvid, cid, params); }
+      catch (e) { if (e.message !== 'CANCELLED') error(`❌ 弹幕出错: ${e.message}`); }
     }
 
     // 3. Subtitle
     if (params.subtitle && !cancelled) {
-      try {
-        await handleSubtitle(bvid, aid, cid, videoInfo.data, params);
-      } catch (e) {
-        error(`❌ 字幕出错: ${e.message}`);
-      }
+      try { await handleSubtitle(bvid, cid, videoInfo.data, params); }
+      catch (e) { if (e.message !== 'CANCELLED') error(`❌ 字幕出错: ${e.message}`); }
     }
 
     // 4. Comments
     if (params.comments && !cancelled) {
       progress(`[评论] 开始获取...`);
-      try {
-        await handleComments(bvid, aid, params);
-      } catch (e) {
-        error(`❌ 评论出错: ${e.message}`);
-      }
+      try { await handleComments(bvid, aid, params); }
+      catch (e) { if (e.message !== 'CANCELLED') error(`❌ 评论出错: ${e.message}`); }
     }
 
     if (!cancelled) done('全部爬取完成！');
   } catch (e) {
-    if (e.message === 'CANCELLED') {
+    if (e.message === 'CANCELLED' || cancelled) {
       error('⛔ 已取消');
+      notify('⛔ 任务已取消', bvid);
     } else {
       error(`❌ 出错: ${e.message}`);
+      notify('❌ 爬取失败', `${bvid}: ${e.message}`);
       console.error(e);
     }
+  } finally {
+    running = false;
+    cancelled = false;
   }
-}
-
-// ============ Sleep ============
-function sleep(ms) {
-  if (cancelled) return Promise.reject(new Error('CANCELLED'));
-  return new Promise(resolve => {
-    const timer = setTimeout(() => {
-      if (cancelled) resolve(); // resolve silently and let loop check cancelled
-      else resolve();
-    }, ms);
-    // Allow cancellation
-    const checkCancel = setInterval(() => {
-      if (cancelled) {
-        clearTimeout(timer);
-        clearInterval(checkCancel);
-        resolve();
-      }
-    }, 100);
-  });
 }
 
 // ============ Message Handler ============
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'scraper') return;
 
-  currentPort = port;
-  cancelled = true; // cancel any previous task
+  activePort = port;
 
-  port.onMessage.addListener((msg) => {
+  port.onMessage.addListener(async (msg) => {
     if (msg.action === 'start') {
-      cancelled = false;
+      if (running) { // 已有任务 → 先取消旧的
+        cancelled = true;
+        if (currentAbort) currentAbort.abort();
+        await sleep(300);
+        cancelled = false;
+      }
       startTask(msg.bvid, msg.params);
     } else if (msg.action === 'cancel') {
       cancelled = true;
-      try { port.postMessage({ type: 'abort', message: '已取消' }); } catch (e) {}
+      if (currentAbort) currentAbort.abort();
+      try { port.postMessage({ type: 'abort', message: '已取消' }); } catch (e) { }
+    } else if (msg.action === 'status') {
+      try { port.postMessage({ type: 'status', running, cancelled }); } catch (e) { }
     }
   });
 
   port.onDisconnect.addListener(() => {
-    cancelled = true;
-    currentPort = null;
+    if (activePort === port) activePort = null;
+    // 注意：popup 关闭不取消任务，任务在后台继续，下载走 chrome.downloads
   });
 });
 
@@ -541,26 +598,33 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const bvid = extractBVID(url);
   if (!bvid) return;
 
-  cancelled = true;
-  currentPort = null; // enter headless mode
-  await new Promise(r => setTimeout(r, 100));
+  if (running) { // 已有任务 → 先取消旧的
+    cancelled = true;
+    if (currentAbort) currentAbort.abort();
+    await sleep(300);
+    cancelled = false;
+  }
 
   let cfg = {};
-  try { const s = await chrome.storage.sync.get('settings'); cfg = s.settings || {}; } catch (e) {}
+  try {
+    const s = await chrome.storage.local.get('settings');
+    cfg = s.settings || {};
+  } catch (e) { }
+  if (!Object.keys(cfg).length) {
+    try { const s = await chrome.storage.sync.get('settings'); cfg = s.settings || {}; } catch (e) { }
+  }
 
   const isComments = info.menuItemId === 'scrape-bilibili-cm';
 
-  cancelled = false;
   await startTask(bvid, {
     danmaku: !isComments,
     comments: isComments,
     subtitle: !isComments,
     withReplies: !!cfg.defaultReplies,
     maxPages: isComments ? (cfg.defaultMaxPages || 3) : 0,
-    subLan: 'ai-zh',
+    subLan: cfg.defaultSubLan || 'ai-zh',
     saveFormat: cfg.defaultFormat || 'json',
     cookie: '',
     subtitleTimeFormat: cfg.subtitleTimeFormat || 'seconds'
   });
-  // Don't restore currentPort — onConnect handles future popups automatically
 });

@@ -1,17 +1,27 @@
 """
 评论抓取模块
+
+结构:
+    get_comments      - 单页评论（带缓存）
+    get_all_comments  - 全量翻页评论（带缓存）
+    楼中楼回复自动翻页取全（每评论最多 REPLY_PAGE_SIZE 条/页，循环至 rcount）
 """
 
 import asyncio
+import logging
+from typing import Optional
 
-from bilibili_api import video, comment, Credential
+from bilibili_api import Credential, comment, video
 
-from bilibili.cache import cache_key, cache_get, cache_set
+from bilibili.cache import cache_get, cache_key, cache_set
+from bilibili.config import MAX_COMMENTS, REPLY_PAGE_SIZE, REPLY_DELAY, RATE_DELAY
 from bilibili.formatters import save_comments
 
+logger = logging.getLogger(__name__)
 
-async def _fetch_one_page(aid: int, page: int, credential: Credential = None):
-    """获取评论单页"""
+
+async def _fetch_one_page(aid: int, page: int, credential: Optional[Credential] = None):
+    """获取评论单页（page 从 1 起）"""
     resp = await comment.get_comments(
         oid=aid,
         type_=comment.CommentResourceType.VIDEO,
@@ -24,66 +34,82 @@ async def _fetch_one_page(aid: int, page: int, credential: Credential = None):
     return replies, total
 
 
-async def _fetch_replies(aid: int, rpid: int, credential: Credential = None):
-    """获取单条评论的楼中楼回复 (第1页, 最多20条)"""
+async def _fetch_all_replies(aid: int, rpid: int, rcount: int, credential: Optional[Credential] = None) -> list:
+    """获取单条评论的全部楼中楼回复（翻页取全）"""
+    if rcount <= 0:
+        return []
+    results = []
+    total_pages = min((rcount + REPLY_PAGE_SIZE - 1) // REPLY_PAGE_SIZE, 20)  # 上限保护
     try:
-        sub = await comment.Comment(
+        sub = comment.Comment(
             oid=aid,
             type_=comment.CommentResourceType.VIDEO,
             rpid=rpid,
             credential=credential,
-        ).get_sub_comments(page_index=1, page_size=20)
-        return sub.get("data", {}).get("replies") or sub.get("replies") or []
+        )
+        for page in range(1, total_pages + 1):
+            resp = await sub.get_sub_comments(page_index=page, page_size=REPLY_PAGE_SIZE)
+            replies = resp.get("data", {}).get("replies") or resp.get("replies") or []
+            results.extend(replies)
+            if len(replies) < REPLY_PAGE_SIZE:
+                break
+            if page < total_pages:
+                await asyncio.sleep(REPLY_DELAY / 1000)
     except Exception as e:
-        print(f"   [!] 回复获取失败 rpid={rpid}: {e}")
-        return []
+        logger.warning("回复获取失败 rpid=%s: %s", rpid, e)
+    return results
+
+
+async def _build_entries(aid: int, replies: list, with_replies: bool, credential: Optional[Credential] = None) -> list:
+    """将原始评论组装为 [{"comment": ..., "replies": [...]}, ...]"""
+    result = []
+    for c in replies:
+        entry = {"comment": c, "replies": []}
+        if with_replies:
+            entry["replies"] = await _fetch_all_replies(aid, c["rpid"], c.get("rcount", 0), credential)
+            await asyncio.sleep(REPLY_DELAY / 1000)
+        result.append(entry)
+        extra = f" ({len(entry['replies'])}条回复)" if entry["replies"] else ""
+        logger.info("   +%s %s%s", c["like"], c["content"]["message"][:60], extra)
+    return result
+
+
+async def _get_video_info(bvid: str, credential: Optional[Credential] = None):
+    """获取 aid + 标题"""
+    v = video.Video(bvid=bvid, credential=credential)
+    info = await v.get_info()
+    return info["aid"], info["title"], v
 
 
 async def get_comments(
     bvid: str,
     page: int = 1,
     max_age: int = 30,
-    credential: Credential = None,
-    save_fmt: str = None,
+    credential: Optional[Credential] = None,
+    save_fmt: Optional[str] = None,
     with_replies: bool = False,
-):
+) -> list:
     """
-    获取单页评论
+    获取单页评论（带缓存）
 
-    Args:
-        bvid: 视频BV号
-        page: 页码
-        max_age: 缓存有效期（秒）
-        credential: 登录凭证
-        save_fmt: 保存格式
-        with_replies: 是否获取楼中楼回复
+    Returns:
+        [{"comment": {...}, "replies": [...]}, ...]
     """
     key = cache_key(bvid, f"comments_p{page}_r{int(with_replies)}", 0)
     cached = cache_get(key, max_age)
     if cached is not None:
-        print("[评论] 缓存命中")
+        logger.info("[评论] 缓存命中 (%d 条)", len(cached))
         return cached
 
-    v = video.Video(bvid=bvid, credential=credential)
-    info = await v.get_info()
-    aid = info["aid"]
+    aid, title, _v = await _get_video_info(bvid, credential)
+    logger.info("[视频] %s (aid=%s)", title, aid)
 
     replies, total = await _fetch_one_page(aid, page, credential)
-    print(f"[评论] aid={aid} 第{page}页, 返回 {len(replies)} 条 (总计约 {total})")
+    logger.info("[评论] aid=%s 第%s页, 返回 %d 条 (总计约 %s)", aid, page, len(replies), total)
 
-    result = []
-    for c in replies:
-        entry = {"comment": c, "replies": []}
-        if with_replies and c.get("rcount", 0) > 0:
-            entry["replies"] = await _fetch_replies(aid, c["rpid"], credential)
-            await asyncio.sleep(0.3)
-        result.append(entry)
-        print(
-            f"   +{c['like']} {c['content']['message'][:60]}"
-            + (f"  ({len(entry['replies'])}条回复)" if entry["replies"] else "")
-        )
-
+    result = await _build_entries(aid, replies, with_replies, credential)
     cache_set(key, result, max_age)
+
     if save_fmt:
         save_comments(result, bvid, save_fmt)
     return result
@@ -92,28 +118,35 @@ async def get_comments(
 async def get_all_comments(
     bvid: str,
     max_age: int = 30,
-    credential: Credential = None,
-    save_fmt: str = None,
+    credential: Optional[Credential] = None,
+    save_fmt: Optional[str] = None,
     with_replies: bool = False,
     max_pages: int = 0,
-):
+) -> list:
     """
-    全量翻页获取评论
+    全量翻页获取评论（带缓存）
 
     Args:
         bvid: 视频BV号
-        max_age: 缓存有效期（秒）
+        max_age: 缓存有效期（秒），0 = 禁用缓存
         credential: 登录凭证
         save_fmt: 保存格式
         with_replies: 是否获取楼中楼回复
         max_pages: 最大页数，0 = 不限
+
+    Returns:
+        [{"comment": {...}, "replies": [...]}, ...]
     """
-    v = video.Video(bvid=bvid, credential=credential)
-    info = await v.get_info()
-    aid = info["aid"]
-    title = info["title"]
+    key = cache_key(bvid, f"comments_all_r{int(with_replies)}_p{max_pages}", 0)
+    cached = cache_get(key, max_age)
+    if cached is not None:
+        logger.info("[评论] 全量缓存命中 (%d 条)", len(cached))
+        return cached
+
+    aid, title, _v = await _get_video_info(bvid, credential)
     pages_info = f" 目标{max_pages}页" if max_pages > 0 else " 全量"
-    print(f"[视频] {title}  (aid={aid}){pages_info}" + ("  [含回复]" if with_replies else ""))
+    logger.info("[视频] %s (aid=%s)%s%s", title, aid, pages_info,
+                "  [含回复]" if with_replies else "")
 
     all_items = []
     page = 1
@@ -122,7 +155,7 @@ async def get_all_comments(
 
     while True:
         if max_pages > 0 and page > max_pages:
-            print(f"  已达目标页数 {max_pages}，停止")
+            logger.info("  已达目标页数 %s，停止", max_pages)
             break
 
         replies, total = await _fetch_one_page(aid, page, credential)
@@ -133,37 +166,34 @@ async def get_all_comments(
             empty_streak += 1
         else:
             empty_streak = 0
-            for c in replies:
-                entry = {"comment": c, "replies": []}
-                if with_replies and c.get("rcount", 0) > 0:
-                    entry["replies"] = await _fetch_replies(aid, c["rpid"], credential)
-                    await asyncio.sleep(0.3)
-                all_items.append(entry)
-            r_count = sum(len(e["replies"]) for e in all_items[-len(replies):])
-            print(
-                f"  第{page}页 +{len(replies)} 评论 / +{r_count} 回复"
-                f" (累计 {len(all_items)} / {known_total or '?'})"
-            )
+            items = await _build_entries(aid, replies, with_replies, credential)
+            all_items.extend(items)
+            r_count = sum(len(e["replies"]) for e in items)
+            logger.info("  第%s页 +%d 评论 / +%d 回复 (累计 %d / %s)",
+                        page, len(replies), r_count, len(all_items), known_total or "?")
 
         if empty_streak >= 2:
-            print(f"  连续{empty_streak}页无数据, 停止")
+            logger.info("  连续%d页无数据, 停止", empty_streak)
             break
         if known_total and len(all_items) >= known_total:
+            logger.info("  已获取全部 %s 条", known_total)
             break
-        if len(all_items) > 10000:
-            print("  达到安全上限, 停止")
+        if len(all_items) > MAX_COMMENTS:
+            logger.info("  达到安全上限 %s, 停止", MAX_COMMENTS)
             break
 
         page += 1
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(RATE_DELAY / 1000)
 
     total_r = sum(len(e["replies"]) for e in all_items)
-    print(f"\n[评论] 全量完成: {len(all_items)} 评论, {total_r} 回复")
+    logger.info("[评论] 全量完成: %d 评论, %d 回复", len(all_items), total_r)
     for item in all_items[:2]:
         c = item["comment"]
-        print(f"   +{c['like']} {c['content']['message'][:60]}")
+        logger.info("   +%s %s", c["like"], c["content"]["message"][:60])
         for r in item.get("replies", [])[:1]:
-            print(f"     ↳ {r['member']['uname']}: {r['content']['message'][:50]}")
+            logger.info("     ↳ %s: %s", r["member"]["uname"], r["content"]["message"][:50])
+
+    cache_set(key, all_items, max_age)
 
     if save_fmt:
         save_comments(all_items, bvid, save_fmt)

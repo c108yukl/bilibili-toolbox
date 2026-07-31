@@ -1,113 +1,99 @@
 
-## 一、项目历程
+# B站工具箱：弹幕 / 评论 / 字幕 抓取
 
-### Phase 1：Python 原型（~1h）
+一键抓取 B站 视频的**弹幕、评论（含楼中楼）、字幕**，提供三种使用方式：Python SDK、命令行 CLI、Streamlit 网页版，另有 Edge 浏览器扩展（主包）。
 
-**起点**：想抓 B站 视频的字幕和弹幕，发现现有工具要么要钱要么太复杂。
-
-用 AI 辅助写了 `bilibili_demo.py`，基于 `bilibili-api-python` 库：
-- 弹幕抓取（调用官方 API）
-- 评论翻页 + 楼中楼回复（全量分页，限速保护）
-- 字幕下载（多语言匹配，SRT/ASS/LRC/JSON 多格式）
-- Cookie 登录态
-- 本地文件缓存
-
-同时用 Streamlit 搭了个网页界面 `app.py`，方便非命令行用户使用。
-
-**这个阶段的核心收获**：理解了异步编程、API 调用、分页逻辑、数据格式化。
-
-### Phase 2：Edge 扩展重写（~2h）
-
-Python 版跑通了，但每次都要开终端/Python 环境，不够方便。决定改写成浏览器扩展。
-
-**技术选型**：Manifest V3、纯 JavaScript、零依赖
-
-**架构**：
 ```
-popup.html  ← 用户界面（UI）
-popup.js    ← 交互逻辑（发送任务、显示日志、下载文件）
-background.js ← 核心引擎（调 B站 API、分页、生成文件）
-utils.js    ← 工具库（MD5、WBI 签名、格式转换）
+├── bilibili/            # Python SDK（可 pip install）
+├── cli.py               # 命令行入口
+├── app.py               # Streamlit 网页版入口 (streamlit run app.py)
+├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3)
+├── tests/               # pytest 测试
+└── bak/                 # 旧版本备份（已忽略）
 ```
 
-### Phase 3：踩坑 & 修复（~1h）
-
-#### 坑 1：字幕 URL 为空
-**症状**：API 返回了字幕语言列表，但 `subtitle_url` 是空的
-**原因**：B站 2023年迁移了字幕接口，旧接口 `x/web-interface/view` 的 `subtitle.list` 已废弃
-**修复**：改用 `x/player/wbi/v2`，配合 WBI 签名
-
-#### 坑 2：WBI 签名算法过期
-**症状**：评论接口全部被风控
-**原因**：B站 2024年更新了 WBI 签名算法，从简单的 `sub[:4]+img[:4]` 改为 64 元素查找表混排
-**修复**：实现正确的混排算法
-
-#### 坑 3：一个模块崩溃阻塞全部
-**症状**：字幕报错 → 评论也不跑了
-**原因**：三个任务在同一个 try-catch 里
-**修复**：改为独立 try-catch，互不影响
+> 已废弃：`bilibili_demo.py` 旧版单文件原型已移入 `bak/`，功能全部由 SDK 替代。
 
 ---
 
-## 二、技术要点总结
+## 一、快速开始
 
-### WBI 签名（B站接口鉴权）
-```
-1. 从 x/web-interface/nav 获取 img_key + sub_key
-2. 64元素查找表混排 → 取前32位作为 mixin_key
-3. 参数排序 → urlencode → 拼接 mixin_key → MD5 → w_rid
-4. 请求附带 wts（时间戳）+ w_rid
-```
-这是 B站反爬的核心机制，理解后对其他平台的签名机制也能举一反三。
+### 方式 1：命令行（最简单）
 
-### API 降级策略
+```bash
+pip install -r requirements.txt
+python cli.py BV1cmofByENF            # 默认抓全部（弹幕+评论+字幕）
+python cli.py BV1cmofByENF -d --save json    # 只抓弹幕
+python cli.py BV1cmofByENF -c --all --replies --save csv   # 全量评论+楼中楼
+python cli.py BV1cmofByENF -s --sub-lan en --save srt      # 英文字幕
+python cli.py BV1cmofByENF --output-dir ./output           # 指定输出目录
 ```
-字幕： Player API（WBI签名）→ 视频信息API → 重新拉取
-评论： cursor版API → WBI签名版 → page版API（最宽容）
-```
-每一层都是独立 try-catch，上一层失败自动降级。
 
-### 扩展与 Python 的区别
-| 维度 | Python 版 | 扩展版 |
-|------|----------|--------|
-| 安装 | pip install | Edge 加载即可 |
-| 部署 | 需要 Python 环境 | 浏览器内置 |
-| Cookie | 手动粘贴 | 自动从浏览器读取 |
-| 使用成本 | 开终端敲命令 | 点图标 → 点按钮 |
-| 反爬 | 依赖第三方库 | 手写 WBI 签名 |
+参数速查：`-d` 弹幕 / `-c` 评论 / `-s` 字幕 / `-dc` 弹幕+评论 / `--all` 全量评论 / `--replies` 楼中楼 / `--max-pages N` 限制页数 / `--save fmt` 保存格式 / `--cookie` 登录态 / `--no-cache` 禁用缓存。
+
+### 方式 2：网页版
+
+```bash
+pip install streamlit
+streamlit run app.py
+```
+
+### 方式 3：Python SDK
+
+```python
+import asyncio
+from bilibili import get_danmaku, get_subtitle, get_comments, parse_cookie
+
+async def main():
+    credential = parse_cookie("SESSDATA=xxx")  # 可选
+    dms = await get_danmaku("BV1cmofByENF", save_fmt="json")
+    subs = await get_subtitle("BV1cmofByENF", lan_code="ai-zh")
+    comments = await get_comments("BV1cmofByENF", with_replies=True)
+
+asyncio.run(main())
+```
+
+`pip install -e .` 后即可作为包导入。
+
+### 方式 4：Edge 浏览器扩展
+
+1. 打开 `edge://extensions/` → 开启"开发人员模式"
+2. 点"加载解压缩的扩展"→ 选择 `bilibili-extension--main/` 目录
+3. 在 B 站视频页点击扩展图标 → 自动识别 BV 号 → 选择任务 → 开始爬取
+4. 也可在视频链接上**右键**直接抓取（弹幕+字幕 或 评论），完成后有桌面通知
+
+扩展特性：自动读取浏览器 Cookie、后台运行（关闭弹窗不中断任务）、字幕语言选择、右键菜单、一键复制/下载。
 
 ---
 
-## 三、未来方向
+## 二、配置
 
-### 近期（已实现）
-- [x] 弹幕 + 字幕双功能
-- [x] 设置页面（默认勾选、自动Cookie、开发者模式）
-- [x] 右键菜单（B站视频页右键直接抓取）
-- [x] 复制到剪贴板
-- [x] TXT 字幕时间格式切换
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `BILI_OUTPUT_DIR` | 项目根目录 | 输出文件保存目录 |
+| `BILI_CACHE_DIR` | `.bili_cache/` | 缓存目录 |
+| `BILI_TIMEOUT` | 15 | 请求超时（秒） |
+| `BILI_RATE_DELAY` | 500 | 评论翻页间隔（毫秒） |
+| `BILI_LOG_LEVEL` | INFO | 日志级别 |
 
-### 中期（值得投入）
-- [ ] **AI 字幕总结**：接入 DeepSeek/通义千问，抓完字幕自动总结要点
-- [ ] **评论翻页修复**：WBI 签名已正确，后续可恢复评论功能
-- [ ] **弹幕词云**：前端可视化
-- [ ] **UP 主信息**：BV 号关联 UP 主数据
+缓存默认 30 秒有效，`--no-cache` 或 `max_age=0` 完全禁用（不读不写）。输出文件重名自动加 `_1` 后缀，不覆盖。
 
-### 远期（看用户反馈）
-- [ ] 多平台支持（YouTube/TikTok）
-- [ ] 直播监控
-- [ ] Anki 卡片导出
-- [ ] 批量导入 BV 列表
+## 三、技术要点
 
+- **WBI 签名**：B站接口鉴权核心。从 `x/web-interface/nav` 取 img_key/sub_key → 64 元素查找表混排取前 32 位 → 参数排序 urlencode + mixin_key → MD5 得 w_rid，附带 wts 时间戳（扩展侧已做服务器时间校准）。
+- **API 降级策略**：字幕 Player API（WBI）→ 视频信息 API → 重新拉取；评论 cursor 版 → WBI 签名版 → page 版（最宽容）。
+- **楼中楼回复**：自动翻页取全（每评论最多 20 页/400 条的保护上限）。
+- **取消与超时**（扩展）：所有请求 15 秒超时，支持随时取消（AbortController 真正中止请求）。
 
-## 四、特别感谢
+## 四、开发
 
-- [bilibili-api-python](https://github.com/Nemo2011/bilibili-api) — Python 版的核心依赖
-- [bilibili-API-collect](https://github.com/pskdje/bilibili-API-collect) — B站 API 文档
-- Claude — 本次 Coding 的全程 AI 搭档
+```bash
+pip install -e .[dev]
+pytest          # 运行测试
+```
 
----
+## 五、版权声明
 
-> 写于 2026 年夏 | 高考后第 17 天
-
-           个人势，无经验，只分享。 AI率97.8% ，py与web为技术验证，Edge插件为主包。
+- 本工具仅供学习交流，请勿用于商业用途或高频抓取
+- B站 API 文档参考 [bilibili-API-collect](https://github.com/pskdje/bilibili-API-collect)
+- Python 侧依赖 [bilibili-api-python](https://github.com/Nemo2011/bilibili-api)

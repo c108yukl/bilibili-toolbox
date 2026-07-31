@@ -1,19 +1,38 @@
-"""
+﻿"""
 数据格式化与文件保存模块
+
+特性:
+- 输出目录由 bilibili.config.OUTPUT_DIR 控制（支持运行时动态覆盖）
+- 文件重名自动加 _1/_2 后缀，不覆盖已有文件
+- 弹幕入参统一为 dict 列表（与 bilibili.danmaku 返回结构一致）
 """
 
 import csv
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
-# 输出文件默认保存目录
-OUTPUT_DIR = Path(__file__).resolve().parent.parent
+from bilibili import config
+
+logger = logging.getLogger(__name__)
 
 
 def fmt_time(ts: int) -> str:
     """Unix 时间戳 → 可读时间字符串"""
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def _unique_path(path: Path) -> Path:
+    """重名时追加 _1/_2 后缀，返回不冲突的路径"""
+    if not path.exists():
+        return path
+    stem, suffix = path.stem, path.suffix
+    for i in range(1, 1000):
+        candidate = path.with_name(f"{stem}_{i}{suffix}")
+        if not candidate.exists():
+            return candidate
+    return path
 
 
 # ─── 评论格式化 ───────────────────────────────────────────
@@ -47,12 +66,14 @@ def format_reply(r: dict) -> dict:
 
 # ─── 评论保存 ─────────────────────────────────────────────
 
-def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt"):
+def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt") -> None:
     """
     保存评论到文件
     comments_with_replies: [{"comment": {...}, "replies": [...]}, ...]
     """
+    config.ensure_dirs()
     title = f"comments_{bvid}"
+    out = _unique_path(config.OUTPUT_DIR / f"{title}.{fmt}")
 
     if fmt == "json":
         rows = []
@@ -60,7 +81,6 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt"):
             c = format_comment(item["comment"])
             c["replies"] = [format_reply(r) for r in item.get("replies", [])]
             rows.append(c)
-        out = OUTPUT_DIR / f"{title}.json"
         out.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
     elif fmt == "csv":
@@ -72,7 +92,6 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt"):
                 rows.append(
                     {**format_reply(r), "level": "reply", "reply_count": "", "rpid": r["rpid"]}
                 )
-        out = OUTPUT_DIR / f"{title}.csv"
         with out.open("w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(
                 f,
@@ -88,30 +107,30 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt"):
             lines.append(f"[+{c['like']}] {c['member']['uname']}: {c['content']['message']}")
             for r in item.get("replies", []):
                 lines.append(f"  ↳[+{r['like']}] {r['member']['uname']}: {r['content']['message']}")
-        out = OUTPUT_DIR / f"{title}.txt"
         out.write_text("\n".join(lines), encoding="utf-8")
 
     total_c = len(comments_with_replies)
     total_r = sum(len(item.get("replies", [])) for item in comments_with_replies)
-    print(f"   -> 已保存 {out.name}  (评论{total_c}, 回复{total_r})")
+    logger.info("   -> 已保存 %s (评论%d, 回复%d)", out.name, total_c, total_r)
 
 
 # ─── 弹幕保存 ─────────────────────────────────────────────
 
-def save_danmaku(dms: list, bvid: str, fmt: str = "txt"):
-    """保存弹幕到文件"""
+def save_danmaku(dms: list, bvid: str, fmt: str = "txt") -> None:
+    """保存弹幕到文件。dms 为 dict 列表（见 bilibili.danmaku 返回结构）"""
+    config.ensure_dirs()
     title = f"danmaku_{bvid}"
-    out = OUTPUT_DIR / f"{title}.{fmt}"
+    out = _unique_path(config.OUTPUT_DIR / f"{title}.{fmt}")
 
     if fmt == "json":
         rows = [
             {
-                "time_s": round(d.dm_time, 1),
-                "text": d.text,
-                "mode": d.mode,
-                "font_size": d.font_size,
-                "color": d.color,
-                "uid": d.uid,
+                "time_s": round(d["time"], 1),
+                "text": d["text"],
+                "mode": d["mode"],
+                "font_size": d["font_size"],
+                "color": d["color"],
+                "uid": d["uid"],
             }
             for d in dms
         ]
@@ -124,29 +143,30 @@ def save_danmaku(dms: list, bvid: str, fmt: str = "txt"):
             w.writerows(
                 [
                     {
-                        "time_s": round(d.dm_time, 1),
-                        "text": d.text,
-                        "mode": d.mode,
-                        "font_size": d.font_size,
-                        "color": d.color,
-                        "uid": d.uid,
+                        "time_s": round(d["time"], 1),
+                        "text": d["text"],
+                        "mode": d["mode"],
+                        "font_size": d["font_size"],
+                        "color": d["color"],
+                        "uid": d["uid"],
                     }
                     for d in dms
                 ]
             )
 
     else:  # txt
-        out.write_text("\n".join(f"[{d.dm_time:7.1f}s] {d.text}" for d in dms), encoding="utf-8")
+        out.write_text("\n".join(f"[{d['time']:7.1f}s] {d['text']}" for d in dms), encoding="utf-8")
 
-    print(f"   -> 已保存 {out.name}  ({len(dms)} 条)")
+    logger.info("   -> 已保存 %s (%d 条)", out.name, len(dms))
 
 
 # ─── 字幕保存 ─────────────────────────────────────────────
 
-def save_subtitle(sub_obj, bvid: str, lan_code: str, fmt: str = "srt"):
-    """保存字幕到文件"""
+def save_subtitle(sub_obj, bvid: str, lan_code: str, fmt: str = "srt") -> None:
+    """保存字幕到文件（srt/ass/lrc/json）"""
+    config.ensure_dirs()
     title = f"subtitle_{bvid}_{lan_code}"
-    out = OUTPUT_DIR / f"{title}.{fmt}"
+    out = _unique_path(config.OUTPUT_DIR / f"{title}.{fmt}")
 
     if fmt == "ass":
         text = sub_obj.to_ass()
@@ -155,11 +175,11 @@ def save_subtitle(sub_obj, bvid: str, lan_code: str, fmt: str = "srt"):
     elif fmt == "json":
         data = sub_obj.to_simple_json()
         out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"   -> 已保存 {out.name}  ({len(data)} 条字幕)")
+        logger.info("   -> 已保存 %s (%d 条字幕)", out.name, len(data))
         return
     else:  # srt
         text = sub_obj.to_srt()
 
     out.write_text(text, encoding="utf-8")
     count = text.count("\n\n")
-    print(f"   -> 已保存 {out.name}  ({count} 条字幕)")
+    logger.info("   -> 已保存 %s (%d 条字幕)", out.name, count)

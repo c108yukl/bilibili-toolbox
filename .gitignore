@@ -1,6 +1,25 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 缓存与输出
 .bili_cache/
-bak/
+.bili_cache_test/
+.bili_output_test/
+danmaku_*
+comments_*
+subtitle_*
+
+# 扩展打包产物
 *.pem
 *.crx
+bak/
+*.zip
+
+# 工具目录
+.workbuddy/

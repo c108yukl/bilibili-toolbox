@@ -7,6 +7,20 @@
 
   let port = null;
   let running = false;
+  const blobUrls = [];
+
+  // ---- Settings storage（local 优先，sync 兼容旧数据）----
+  async function getSettings() {
+    try {
+      const s = await chrome.storage.local.get('settings');
+      if (s.settings) return s.settings;
+    } catch (e) { }
+    try {
+      const s = await chrome.storage.sync.get('settings');
+      return s.settings || {};
+    } catch (e) { }
+    return {};
+  }
 
   // ---- Load settings and apply defaults ----
   (async function init() {
@@ -22,12 +36,11 @@
           $('auto-detect-hint').textContent = '📌 当前在B站但未检测到视频BV号';
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // Load user settings
     try {
-      const s = await chrome.storage.sync.get('settings');
-      const cfg = s.settings || {};
+      const cfg = await getSettings();
       $('chk-danmaku').checked = cfg.defaultDanmaku !== undefined ? cfg.defaultDanmaku : true;
       $('chk-comments').checked = !!cfg.defaultComments;
       $('chk-subtitle').checked = !!cfg.defaultSubtitle;
@@ -38,17 +51,36 @@
 
       // Auto-cookie
       if (cfg.autoCookie) {
-        try {
-          const cookies = await chrome.cookies.getAll({ domain: '.bilibili.com' });
-          const parts = cookies.map(c => `${c.name}=${c.value}`);
-          if (parts.length > 0) {
-            $('cookie').value = parts.join('; ');
-            $('auto-detect-hint').textContent += ' 🍪Cookie已自动填充';
-          }
-        } catch (e) {}
+        await fillCookieAuto();
       }
-    } catch (e) {}
+    } catch (e) { }
   })();
+
+  // ---- Cookie 自动填充（返回是否成功）----
+  async function fillCookieAuto() {
+    try {
+      const cookies = await getBiliCookies();
+      const parts = cookies.map(c => `${c.name}=${c.value}`);
+      const status = $('cookie-status');
+      if (parts.length > 0) {
+        $('cookie').value = parts.join('; ');
+        $('auto-detect-hint').textContent += ' 🍪Cookie已自动填充';
+        status.textContent = `✅ 已读取 ${cookies.length} 项`;
+        status.style.color = '#4caf50';
+        return true;
+      }
+      $('auto-detect-hint').textContent += ' ⚠️ 未找到B站Cookie';
+      status.textContent = '⚠️ 浏览器中无B站Cookie，请先在浏览器登录B站';
+      status.style.color = '#ff9800';
+      return false;
+    } catch (e) {
+      const status = $('cookie-status');
+      $('auto-detect-hint').textContent += ' ⚠️ Cookie读取失败';
+      status.textContent = '❌ 读取失败: ' + e.message;
+      status.style.color = '#f44336';
+      return false;
+    }
+  }
 
   // Settings button
   $('btn-settings').addEventListener('click', (e) => {
@@ -56,9 +88,19 @@
     chrome.runtime.openOptionsPage();
   });
 
+  // Manual cookie read
+  $('btn-read-cookie').addEventListener('click', async () => {
+    $('btn-read-cookie').disabled = true;
+    try {
+      await fillCookieAuto();
+    } finally {
+      $('btn-read-cookie').disabled = false;
+    }
+  });
+
   // ---- Connection management ----
   function connect() {
-    if (port) try { port.disconnect(); } catch(e) {}
+    if (port) try { port.disconnect(); } catch (e) { }
     port = chrome.runtime.connect({ name: 'scraper' });
 
     port.onMessage.addListener((msg) => {
@@ -86,16 +128,23 @@
           appendLog('⛔ ' + msg.message, 'log-error');
           setRunning(false);
           break;
+        case 'status':
+          if (msg.running && !running) {
+            // 打开 popup 时任务已在后台运行（可能从右键菜单或上次关闭的 popup 启动）
+            appendLog('⏳ 检测到后台任务正在运行...', 'log-progress');
+            setRunning(true);
+          }
+          break;
       }
     });
 
     port.onDisconnect.addListener(() => {
-      if (running) {
-        appendLog('⚠️ 连接已断开', 'log-error');
-        setRunning(false);
-      }
       port = null;
+      // 不改变 running 状态：任务在后台继续，重新打开 popup 时会通过 status 同步
     });
+
+    // 查询当前后台任务状态
+    try { port.postMessage({ action: 'status' }); } catch (e) { }
   }
 
   // ---- Logging ----
@@ -126,6 +175,7 @@
     const label = `${icons[task] || '📎'} ${filename}`;
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
+    blobUrls.push(url);
 
     // Download button
     const dlBtn = document.createElement('button');
@@ -164,6 +214,7 @@
 
   function clearDownloads() {
     downloadArea.innerHTML = '';
+    while (blobUrls.length) URL.revokeObjectURL(blobUrls.pop());
   }
 
   // ---- State ----
@@ -188,8 +239,7 @@
 
     if (!port) connect();
 
-    const s = await chrome.storage.sync.get('settings');
-    const cfg = (s.settings || {});
+    const cfg = await getSettings();
     const params = {
       danmaku: $('chk-danmaku').checked,
       comments: $('chk-comments').checked,
