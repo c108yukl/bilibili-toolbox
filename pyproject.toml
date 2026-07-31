@@ -28,3 +28,4 @@ py-modules = ["cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
