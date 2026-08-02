@@ -122,9 +122,13 @@ async def get_all_comments(
     save_fmt: Optional[str] = None,
     with_replies: bool = False,
     max_pages: int = 0,
+    max_comments: int = 0,
 ) -> list:
     """
     全量翻页获取评论（带缓存）
+
+    滑动窗口：max_comments > 0 时，累计达到目标条数立即停止翻页；
+    若单页超出则截断，仅保留前 max_comments 条（按热度排序的前端，最热评论）。
 
     Args:
         bvid: 视频BV号
@@ -133,11 +137,12 @@ async def get_all_comments(
         save_fmt: 保存格式
         with_replies: 是否获取楼中楼回复
         max_pages: 最大页数，0 = 不限
+        max_comments: 评论条数上限（滑动窗口），0 = 不限
 
     Returns:
         [{"comment": {...}, "replies": [...]}, ...]
     """
-    key = cache_key(bvid, f"comments_all_r{int(with_replies)}_p{max_pages}", 0)
+    key = cache_key(bvid, f"comments_all_r{int(with_replies)}_p{max_pages}_n{max_comments}", 0)
     cached = cache_get(key, max_age)
     if cached is not None:
         logger.info("[评论] 全量缓存命中 (%d 条)", len(cached))
@@ -145,7 +150,8 @@ async def get_all_comments(
 
     aid, title, _v = await _get_video_info(bvid, credential)
     pages_info = f" 目标{max_pages}页" if max_pages > 0 else " 全量"
-    logger.info("[视频] %s (aid=%s)%s%s", title, aid, pages_info,
+    count_info = f" 目标{max_comments}条" if max_comments > 0 else ""
+    logger.info("[视频] %s (aid=%s)%s%s%s", title, aid, pages_info, count_info,
                 "  [含回复]" if with_replies else "")
 
     all_items = []
@@ -156,6 +162,9 @@ async def get_all_comments(
     while True:
         if max_pages > 0 and page > max_pages:
             logger.info("  已达目标页数 %s，停止", max_pages)
+            break
+        if max_comments > 0 and len(all_items) >= max_comments:
+            logger.info("  已达目标条数 %s，停止", max_comments)
             break
 
         replies, total = await _fetch_one_page(aid, page, credential)
@@ -168,6 +177,9 @@ async def get_all_comments(
             empty_streak = 0
             items = await _build_entries(aid, replies, with_replies, credential)
             all_items.extend(items)
+            # 滑动窗口：逐条累计，达到目标条数立即截断
+            if max_comments > 0 and len(all_items) >= max_comments:
+                all_items = all_items[:max_comments]
             r_count = sum(len(e["replies"]) for e in items)
             logger.info("  第%s页 +%d 评论 / +%d 回复 (累计 %d / %s)",
                         page, len(replies), r_count, len(all_items), known_total or "?")

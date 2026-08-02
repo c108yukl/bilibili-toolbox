@@ -253,16 +253,41 @@ const AI_DEFAULTS = {
   aiBaseUrl: 'https://api.deepseek.com',
   aiModel: 'deepseek-chat',
   aiPrompt: '你是视频字幕分析助手。请用中文总结以下视频字幕，输出三部分：\n1. 主题概述（2-3句话）\n2. 核心要点（编号列表）\n3. 亮点金句（如有）\n\n字幕内容：\n{text}',
-  aiDanmakuPrompt: '你是B站弹幕分析助手。请分析以下弹幕（每行一条），用中文输出四部分：\n1. 弹幕情绪倾向（正面/负面/中立的大致占比）\n2. 热议话题（弹幕最关注的几个点）\n3. 名场面 / 高能时刻（被反复刷屏的梗或事件）\n4. 有趣弹幕精选（最多5条）\n\n弹幕内容：\n{text}'
+  aiDanmakuPrompt: '你是B站弹幕分析助手。请分析以下弹幕（每行一条），用中文输出四部分：\n1. 弹幕情绪倾向（正面/负面/中立的大致占比）\n2. 热议话题（弹幕最关注的几个点）\n3. 名场面 / 高能时刻（被反复刷屏的梗或事件）\n4. 有趣弹幕精选（最多5条）\n\n弹幕内容：\n{text}',
+  aiCommentPrompt: '你是B站评论区分析助手。请分析以下评论（每条格式：用户名: 评论），用中文输出五部分：\n1. 总体情感倾向（正面/负面/中立的估算占比）\n2. 核心观点（评论区的主要共识或态度）\n3. 热议话题（讨论最集中的几个话题）\n4. 亮点评论精选（最多5条，附用户名）\n5. 争议点 / 建议（如有）\n\n评论内容：\n{text}',
+  aiThinking: true, // 展示思考模型(reasoning)的推理过程；deepseek-reasoner 等模型需关闭 temperature
+  aiCommentMaxItems: 300, // 去重后发送给 AI 的评论行数上限
+  aiMaxTokens: 4000, // 单次回复最大 token（思考+正文），默认 4000，避免长分析被截断
 };
 
-// ============ AI API Key（仅存 chrome.storage.session，浏览器会话级，不落盘不同步） ============
-// 明文 Key 不进 storage.local/sync，避免同步到云端或长期落盘
+// ============ AI API Key（默认仅存 chrome.storage.session，浏览器会话级，不落盘不同步） ============
+// 用户可在设置页勾选"永久保存"后，Key 明文存入 chrome.storage.local（仅本机浏览器，不同步云端）
+const AI_KEY_PERSIST_KEY = 'aiApiKeyPersist';
+
+// 用户是否已选择"永久保存 API Key"（设置项 aiKeyPersist）
+async function getAiKeyPersistFlag() {
+  try {
+    const s = await chrome.storage.local.get('settings');
+    if (s.settings && s.settings.aiKeyPersist) return true;
+  } catch (e) { }
+  return false;
+}
+
 async function getAiKey() {
   try {
     const s = await chrome.storage.session.get('aiApiKey');
     if (s.aiApiKey) return s.aiApiKey;
   } catch (e) { }
+  // 已选择永久保存：从 storage.local 读取并恢复到会话
+  if (await getAiKeyPersistFlag()) {
+    try {
+      const s = await chrome.storage.local.get(AI_KEY_PERSIST_KEY);
+      if (s[AI_KEY_PERSIST_KEY]) {
+        try { await chrome.storage.session.set({ aiApiKey: s[AI_KEY_PERSIST_KEY] }); } catch (e) { }
+        return s[AI_KEY_PERSIST_KEY];
+      }
+    } catch (e) { }
+  }
   // 兼容旧版本：从 local/sync 迁移一次后清理
   for (const area of ['local', 'sync']) {
     try {
@@ -281,6 +306,14 @@ async function getAiKey() {
 
 async function setAiKey(key) {
   try { await chrome.storage.session.set({ aiApiKey: key || '' }); } catch (e) { }
+  // 仅当用户勾选"永久保存"时才明文落盘到 storage.local；取消勾选则删除本地副本
+  try {
+    if (await getAiKeyPersistFlag()) {
+      await chrome.storage.local.set({ [AI_KEY_PERSIST_KEY]: key || '' });
+    } else {
+      await chrome.storage.local.remove(AI_KEY_PERSIST_KEY);
+    }
+  } catch (e) { }
 }
 
 // 确保对自定义 AI 服务地址有宿主权限（optional_host_permissions）。
@@ -301,7 +334,7 @@ async function ensureAiHostPermission(baseUrl) {
 async function resolveAiCfg(cfg) {
   const merged = { ...AI_DEFAULTS, ...(cfg || {}) };
   const key = await getAiKey();
-  if (!key) throw new Error('未配置 AI API Key（设置 → AI 总结，仅保存在本浏览器会话）');
+  if (!key) throw new Error('未配置 AI API Key（设置 → AI 总结，默认仅保存在本浏览器会话）');
   await ensureAiHostPermission(merged.aiBaseUrl);
   return { cfg: merged, key };
 }
@@ -322,23 +355,51 @@ function subtitlesToText(subs) {
   return (subs || []).map(s => `[${fmtFullTime(s.from)}] ${s.content}`).join('\n');
 }
 
-async function aiSummarize(subs, aiCfg) {
+// ============ AI 分析时间窗口 ============
+// 解析时间窗口输入（支持 "mm:ss" / "1:30:05" / 纯秒数 / 空=不限）→ 秒数；非法输入返回 null
+function parseTimeWindow(str) {
+  const s = String(str || '').trim();
+  if (!s) return null;
+  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+  const parts = s.split(':').map(p => parseFloat(p));
+  if (!parts.length || parts.some(isNaN)) return null;
+  let sec = 0;
+  for (const p of parts) sec = sec * 60 + p;
+  return sec;
+}
+
+// 按时间窗口过滤：仅保留 getTime(item) 落在 [start, end] 内的条目；空值表示不限
+function filterByWindow(items, getTime, startStr, endStr) {
+  const start = parseTimeWindow(startStr);
+  const end = parseTimeWindow(endStr);
+  if (start == null && end == null) return items;
+  return (items || []).filter(it => {
+    const t = getTime(it);
+    if (start != null && t < start) return false;
+    if (end != null && t > end) return false;
+    return true;
+  });
+}
+
+// 非流式 AI 调用（aiStream=false 时使用；返回完整正文 + 思考过程）
+async function aiComplete(text, prompt, aiCfg) {
   const { cfg, key } = await resolveAiCfg(aiCfg);
-  const text = buildAIText(subs, cfg);
-  const content = cfg.aiPrompt.replace(/\{text\}/g, text);
+  const content = String(prompt || '').replace(/\{text\}/g, text || '');
   const base = cfg.aiBaseUrl.replace(/\/+$/, '');
+  const body = {
+    model: cfg.aiModel || 'deepseek-chat',
+    messages: [{ role: 'user', content }],
+    max_tokens: cfg.aiMaxTokens || 4000
+  };
+  // 思考模型（reasoner）不支持 temperature 参数，开启思考时省略
+  if (cfg.aiThinking !== true) body.temperature = 0.4;
   const resp = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${key}`
     },
-    body: JSON.stringify({
-      model: cfg.aiModel || 'deepseek-chat',
-      messages: [{ role: 'user', content }],
-      temperature: 0.4,
-      max_tokens: 2000
-    })
+    body: JSON.stringify(body)
   });
   if (!resp.ok) {
     let detail = '';
@@ -346,9 +407,9 @@ async function aiSummarize(subs, aiCfg) {
     throw new Error(`AI 接口错误(HTTP ${resp.status})${detail ? ': ' + detail : ''}`);
   }
   const data = await resp.json();
-  const summary = data.choices?.[0]?.message?.content || '';
-  if (!summary) throw new Error('AI 返回为空');
-  return summary.trim();
+  const msg = data.choices?.[0]?.message || {};
+  if (!msg.content) throw new Error('AI 返回为空');
+  return { content: String(msg.content).trim(), reasoning: String(msg.reasoning_content || '').trim() };
 }
 
 // 构建发送给 AI 的弹幕文本（去重 + 条数上限）
@@ -366,11 +427,20 @@ function buildDanmakuText(dms, maxItems = 500) {
 }
 
 // 流式 AI 调用：text 为已构建文本，prompt 支持 {text} 占位符
-// onChunk(chunk, fullText) 实时回调；signal 用于取消
-async function aiStream(text, prompt, aiCfg, onChunk, signal) {
+// onChunk(chunk, fullText) 实时回调正文；onReasoning(rChunk, fullReasoning) 实时回调思考过程
+// signal 用于取消；思考模型（如 deepseek-reasoner）会先输出 reasoning_content 再输出正文
+async function aiStream(text, prompt, aiCfg, onChunk, signal, onReasoning) {
   const { cfg, key } = await resolveAiCfg(aiCfg);
   const content = String(prompt || '').replace(/\{text\}/g, text || '');
   const base = cfg.aiBaseUrl.replace(/\/+$/, '');
+  const body = {
+    model: cfg.aiModel || 'deepseek-chat',
+    messages: [{ role: 'user', content }],
+    max_tokens: cfg.aiMaxTokens || 4000,
+    stream: true
+  };
+  // 思考模型（reasoner）不支持 temperature 参数，开启思考时省略
+  if (cfg.aiThinking !== true) body.temperature = 0.4;
   const resp = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     signal,
@@ -378,13 +448,7 @@ async function aiStream(text, prompt, aiCfg, onChunk, signal) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${key}`
     },
-    body: JSON.stringify({
-      model: cfg.aiModel || 'deepseek-chat',
-      messages: [{ role: 'user', content }],
-      temperature: 0.4,
-      max_tokens: 2000,
-      stream: true
-    })
+    body: JSON.stringify(body)
   });
   if (!resp.ok) {
     let detail = '';
@@ -397,6 +461,7 @@ async function aiStream(text, prompt, aiCfg, onChunk, signal) {
   const decoder = new TextDecoder();
   let buffer = '';
   let full = '';
+  let fullReasoning = '';
   let finished = false;
 
   while (!finished) {
@@ -412,51 +477,44 @@ async function aiStream(text, prompt, aiCfg, onChunk, signal) {
       if (payload === '[DONE]') { finished = true; break; }
       try {
         const json = JSON.parse(payload);
-        const delta = json.choices?.[0]?.delta?.content;
-        if (delta) {
-          full += delta;
-          if (onChunk) onChunk(delta, full);
+        const delta = json.choices?.[0]?.delta || {};
+        // 思考模型：先流式输出 reasoning_content（推理过程），再输出 content（正文）
+        if (delta.reasoning_content) {
+          fullReasoning += delta.reasoning_content;
+          if (onReasoning) onReasoning(delta.reasoning_content, fullReasoning);
+        }
+        if (delta.content) {
+          full += delta.content;
+          if (onChunk) onChunk(delta.content, full);
         }
       } catch (e) { /* 跳过非 JSON 行 */ }
     }
   }
-  return full.trim();
+  return { content: full.trim(), reasoning: fullReasoning.trim() };
 }
 
-async function aiSummarize(subs, aiCfg) {
-  const { cfg, key } = await resolveAiCfg(aiCfg);
-  const text = buildAIText(subs, cfg);
-  const content = cfg.aiPrompt.replace(/\{text\}/g, text);
-  const base = cfg.aiBaseUrl.replace(/\/+$/, '');
-  const resp = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`
-    },
-    body: JSON.stringify({
-      model: cfg.aiModel || 'deepseek-chat',
-      messages: [{ role: 'user', content }],
-      temperature: 0.4,
-      max_tokens: 2000
-    })
-  });
-  if (!resp.ok) {
-    let detail = '';
-    try { detail = (await resp.json()).error?.message || ''; } catch (e) { }
-    throw new Error(`AI 接口错误(HTTP ${resp.status})${detail ? ': ' + detail : ''}`);
+// ============ 评论 → AI 文本 ============
+// 组装评论数据为 AI 可读文本：去重 + 条数上限 + 每评论附带最多 3 条回复
+function buildCommentText(items, maxItems = 300) {
+  const seen = new Set();
+  const lines = [];
+  for (const item of items || []) {
+    const c = item?.comment || {};
+    const t = String(c.content?.message || '').trim();
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      lines.push(`[赞${c.like ?? 0}] ${c.member?.uname || '匿名'}: ${t}`);
+    }
+    for (const r of (item?.replies || []).slice(0, 3)) {
+      const rt = String(r.content?.message || '').trim();
+      if (rt && !seen.has(rt)) {
+        seen.add(rt);
+        lines.push(`  ↳ ${r.member?.uname || ''}: ${rt}`);
+      }
+    }
+    if (lines.length >= maxItems) break;
   }
-  const data = await resp.json();
-  const summary = data.choices?.[0]?.message?.content || '';
-  if (!summary) throw new Error('AI 返回为空');
-  return summary.trim();
-}
-
-// AI 流式总结（SSE）。onChunk(chunk, fullText) 实时回调；支持取消
-async function aiSummarizeStream(subs, aiCfg, onChunk, signal) {
-  const cfg = { ...AI_DEFAULTS, ...(aiCfg || {}) };
-  const text = buildAIText(subs, cfg);
-  return aiStream(text, cfg.aiPrompt, cfg, onChunk, signal);
+  return lines.join('\n').slice(0, 20000);
 }
 
 // 获取模型列表（OpenAI 兼容：GET {base}/models）→ 模型 id 数组
@@ -538,6 +596,61 @@ function parseDanmakuXML(xmlText) {
       dm_time: parseFloat(parts[0]) || 0,
       text: match[2].trim()
     });
+  }
+  return dms;
+}
+
+// ============ Danmaku Proto Parser (seg.so) ============
+// B站 x/v2/dm/web/seg.so 返回 protobuf(DmSegMobileReply)，登录态下弹幕远比 dm/list.so 全
+function parseDanmakuProto(buf) {
+  const dms = [];
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let pos = 0;
+  const readVarint = () => {
+    let r = 0, shift = 0;
+    while (pos < u8.length) {
+      const b = u8[pos++];
+      r |= (b & 0x7f) << shift;
+      if ((b & 0x80) === 0) break;
+      shift += 7;
+    }
+    return r;
+  };
+  const decoder = new TextDecoder();
+  while (pos < u8.length) {
+    const tag = readVarint();
+    const field = tag >> 3;
+    const wire = tag & 7;
+    if (field === 1 && wire === 2) {
+      const len = readVarint();
+      const end = pos + len;
+      const dm = { mode: 1, font_size: 25, color: 16777215, ctime: 0, uid: '', dm_time: 0, text: '' };
+      while (pos < end) {
+        const ftag = readVarint();
+        const f = ftag >> 3;
+        const w = ftag & 7;
+        if (w === 2) {
+          const l = readVarint();
+          const sub = u8.subarray(pos, pos + l);
+          pos += l;
+          if (f === 6) dm.uid = decoder.decode(sub);
+          else if (f === 7) dm.text = decoder.decode(sub);
+        } else if (w === 0) {
+          const v = readVarint();
+          if (f === 2) dm.dm_time = v / 1000; // progress: 毫秒
+          else if (f === 3) dm.mode = v;
+          else if (f === 4) dm.font_size = v;
+          else if (f === 5) dm.color = v;
+          else if (f === 8) dm.ctime = v;
+        } else if (w === 1) { pos += 8; }
+        else if (w === 5) { pos += 4; }
+        else break;
+      }
+      if (dm.text) dms.push(dm);
+    } else if (wire === 0) { readVarint(); }
+    else if (wire === 1) { pos += 8; }
+    else if (wire === 5) { pos += 4; }
+    else break;
   }
   return dms;
 }

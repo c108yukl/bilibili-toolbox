@@ -54,15 +54,18 @@
     return {};
   }
 
-  // ---- 依赖勾选联动：热词↔弹幕，AI总结↔字幕，AI弹幕↔弹幕 ----
+  // ---- 依赖勾选联动：热词↔弹幕，AI总结↔字幕，AI弹幕↔弹幕，AI评论↔评论 ----
   function syncOptionStates() {
     const dmOn = $('chk-danmaku').checked;
     const subOn = $('chk-subtitle').checked;
+    const cmOn = $('chk-comments').checked;
     $('opt-cloud').classList.toggle('opt-hide', !dmOn);
     $('opt-ai-dm').classList.toggle('opt-hide', !dmOn);
     $('opt-ai').classList.toggle('opt-hide', !subOn);
+    $('opt-ai-cm').classList.toggle('opt-hide', !cmOn);
     if (!dmOn) { $('chk-cloud').checked = false; $('chk-ai-dm').checked = false; }
     if (!subOn) $('chk-ai').checked = false;
+    if (!cmOn) $('chk-ai-cm').checked = false;
   }
 
   // ---- 按设置控制主界面分区显隐 ----
@@ -118,6 +121,8 @@
       $('chk-subtitle').checked = !!cfg.defaultSubtitle;
       $('chk-replies').checked = !!cfg.defaultReplies;
       $('max-pages').value = cfg.defaultMaxPages || 0;
+      $('max-comments').value = cfg.commentMaxItems || 0;
+      $('rate-delay').value = cfg.commentRateDelay || 400;
       if (cfg.defaultFormat) $('save-fmt').value = cfg.defaultFormat;
       if (cfg.defaultSubLan) $('sub-lan').value = cfg.defaultSubLan;
       syncOptionStates();
@@ -203,10 +208,13 @@
           showCloud(msg.bvid, msg.words);
           break;
         case 'summary':
-          showSummary(msg.bvid, msg.partial, msg.done !== false);
+          showSummary(msg.bvid, msg.partial, msg.done !== false, msg.thinking);
           break;
         case 'ai-dm':
-          showAiDm(msg.bvid, msg.partial, msg.done !== false);
+          showAiDm(msg.bvid, msg.partial, msg.done !== false, msg.thinking);
+          break;
+        case 'ai-cm':
+          showAiCm(msg.bvid, msg.partial, msg.done !== false, msg.thinking);
           break;
         case 'done':
           appendLog('✅ ' + msg.message, 'log-success');
@@ -290,9 +298,22 @@
   }
 
   let lastSummaryText = '';
-  function showSummary(bvid, text, done) {
+  // 展示 AI 正文 + 思考过程（reasoning_content）
+  function showThinking(thinkEl, bodyEl, thinking) {
+    if (!thinking) {
+      thinkEl.style.display = 'none';
+      bodyEl.textContent = '';
+      return;
+    }
+    thinkEl.style.display = '';
+    bodyEl.textContent = thinking;
+    if (thinkEl.open) bodyEl.scrollTop = bodyEl.scrollHeight;
+  }
+
+  function showSummary(bvid, text, done, thinking) {
     lastSummaryText = done ? text : lastSummaryText;
     $('summary-body').textContent = text;
+    showThinking($('summary-think'), $('summary-think-body'), thinking);
     if (!done && text) {
       $('summary-body').scrollTop = $('summary-body').scrollHeight;
     }
@@ -303,15 +324,30 @@
   }
 
   let lastAiDmText = '';
-  function showAiDm(bvid, text, done) {
+  function showAiDm(bvid, text, done, thinking) {
     lastAiDmText = done ? text : lastAiDmText;
     $('ai-dm-body').textContent = text;
+    showThinking($('ai-dm-think'), $('ai-dm-think-body'), thinking);
     if (!done && text) {
       $('ai-dm-body').scrollTop = $('ai-dm-body').scrollHeight;
     }
     if (!$('panel-ai-dm').classList.contains('show')) {
       $('panel-ai-dm').querySelector('h3').title = `AI 弹幕分析 - ${bvid}`;
       $('panel-ai-dm').classList.add('show');
+    }
+  }
+
+  let lastAiCmText = '';
+  function showAiCm(bvid, text, done, thinking) {
+    lastAiCmText = done ? text : lastAiCmText;
+    $('ai-cm-body').textContent = text;
+    showThinking($('ai-cm-think'), $('ai-cm-think-body'), thinking);
+    if (!done && text) {
+      $('ai-cm-body').scrollTop = $('ai-cm-body').scrollHeight;
+    }
+    if (!$('panel-ai-cm').classList.contains('show')) {
+      $('panel-ai-cm').querySelector('h3').title = `AI 评论分析 - ${bvid}`;
+      $('panel-ai-cm').classList.add('show');
     }
   }
 
@@ -337,6 +373,9 @@
   $('btn-ai-dm-copy').addEventListener('click', (e) => {
     copyText(lastAiDmText, e.target);
   });
+  $('btn-ai-cm-copy').addEventListener('click', (e) => {
+    copyText(lastAiCmText, e.target);
+  });
   $('btn-copy-bvid').addEventListener('click', (e) => {
     copyText($('bvid').value.trim(), e.target);
   });
@@ -348,7 +387,7 @@
     wrap.style.gap = '4px';
     wrap.style.margin = '3px';
 
-    const icons = { danmaku: '💬', comments: '📝', subtitle: '📄', cloud: '☁️', up: '👤', summary: '🤖', 'summary-json': '🧠', analysis: '🧠', 'analysis-json': '🧠' };
+    const icons = { danmaku: '💬', comments: '📝', subtitle: '📄', cloud: '☁️', up: '👤', summary: '🤖', 'summary-json': '🧠', analysis: '🧠', 'analysis-json': '🧠', 'comment-analysis': '💬🧠', 'comment-analysis-json': '💬🧠' };
     const label = `${icons[task] || '📎'} ${filename}`;
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
@@ -423,6 +462,7 @@
     $('panel-cloud').classList.remove('show');
     $('panel-summary').classList.remove('show');
     $('panel-ai-dm').classList.remove('show');
+    $('panel-ai-cm').classList.remove('show');
     $('progress-wrap').classList.remove('show');
     $('progress-text').classList.remove('show');
     setRunning(true);
@@ -439,8 +479,11 @@
       upInfo: $('chk-up').checked,
       aiSummary: $('chk-ai').checked,
       aiDanmaku: $('chk-ai-dm').checked,
+      aiComments: $('chk-ai-cm').checked,
       withReplies: $('chk-replies').checked,
       maxPages: parseInt($('max-pages').value) || 0,
+      maxComments: parseInt($('max-comments').value) || 0,
+      commentRateDelay: parseInt($('rate-delay').value) || 400,
       subLan: $('sub-lan').value,
       saveFormat: $('save-fmt').value,
       cookie: $('cookie').value || '',
@@ -473,6 +516,7 @@
     $('chk-up').checked = true;
     $('chk-ai').checked = true;
     $('chk-ai-dm').checked = true;
+    $('chk-ai-cm').checked = true;
     $('chk-replies').checked = true;
     syncOptionStates();
     appendLog('🪄 已全选所有任务', 'log-info');

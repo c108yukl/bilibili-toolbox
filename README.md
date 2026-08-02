@@ -7,7 +7,7 @@
 ├── bilibili/            # Python SDK（可 pip install）
 ├── cli.py               # 命令行入口
 ├── app.py               # Streamlit 网页版入口 (streamlit run app.py)
-├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.0.0)
+├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.1.0)
 ├── tests/               # pytest 测试
 └── bak/                 # 旧版本备份 / 打包产物（已忽略）
 ```
@@ -55,14 +55,14 @@ asyncio.run(main())
 
 `pip install -e .` 后即可作为包导入。
 
-### 方式 4：Edge 浏览器扩展（主包，v1.0.0）
+### 方式 4：Edge 浏览器扩展（主包，v1.1.0）
 
 1. 打开 `edge://extensions/` → 开启"开发人员模式"
 2. 点"加载解压缩的扩展"→ 选择 `bilibili-extension--main/` 目录
 3. 在 B 站视频页点击扩展图标 → 自动识别 BV 号 → 选择任务 → 开始爬取
 4. 也可在视频链接上**右键**直接抓取，或使用页面右下角的**悬浮球**快捷抓取
 
-扩展特性：弹幕/评论/字幕/热词/UP主信息/批量抓取、AI 字幕总结与弹幕分析（DeepSeek 流式输出、模型自动获取、余额查询）、悬浮球、5 套主题色、合成音效、后台运行、自动 Cookie、一键复制/下载、设置备份导入导出。
+扩展特性：弹幕/评论/字幕/热词/UP主信息/批量抓取、AI 字幕总结与弹幕/评论分析（DeepSeek 流式输出、模型自动获取、余额查询）、AI 思考过程流式展示、三条 AI 任务并发（弹幕/字幕无需等待评论）、弹幕/字幕分析自定义时间窗口、评论条数可控（滑动窗口）与翻页速率控制、悬浮球入场动效与自定义提示、设置页左侧标签分类、5 套主题色、合成音效、后台运行、自动 Cookie、一键复制/下载、设置备份导入导出。弹幕抓取带登录 Cookie 时自动使用 B站分段接口（`seg.so` protobuf）并对比 `list.so` 取更全的一份——B站对未登录/部分高密度视频的弹幕接口只返回少量抽样（如 6000 条的短片只给 120 条），填好 Cookie 可大幅提升弹幕完整度。
 
 详细说明见 `bilibili-extension--main/README.md`。
 

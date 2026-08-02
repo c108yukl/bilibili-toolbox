@@ -148,6 +148,11 @@
       font-size: 12px; line-height: 1.65; color: #ccc; background: rgba(0,0,0,.25);
       border-radius: 8px; padding: 8px 10px; margin-bottom: 6px;
     }
+    /* AI 思考过程（reasoning_content）折叠展示 */
+    details.think { margin-bottom: 6px; }
+    details.think summary { font-size: 11px; color: var(--text-dim); cursor: pointer; user-select: none; }
+    details.think summary:hover { color: var(--accent); }
+    .think-body { max-height: 110px; color: #9aa3c7; font-style: italic; margin-bottom: 0; }
     /* 日志 */
     .log-box {
       background: rgba(0,0,0,.3); border: 1px solid var(--card-border); border-radius: 10px;
@@ -171,7 +176,7 @@
 <body>
   <div class="header">
     <div class="logo">B</div>
-    <h1>B站数据爬取工具 <small id="version-tag">v1.0.0</small></h1>
+    <h1>B站数据爬取工具 <small id="version-tag">v1.1.0</small></h1>
     <a id="btn-settings" href="#" title="设置" class="icon-btn">⚙️</a>
   </div>
 
@@ -205,10 +210,13 @@
         <label id="opt-up" class="switch"><input type="checkbox" id="chk-up"><span class="track"></span><span class="lbl"><span class="badge badge-up">👤 UP主</span></span></label>
         <label id="opt-ai" class="switch opt-hide"><input type="checkbox" id="chk-ai"><span class="track"></span><span class="lbl"><span class="badge badge-ai">🤖 AI总结</span></span></label>
         <label id="opt-ai-dm" class="switch opt-hide"><input type="checkbox" id="chk-ai-dm"><span class="track"></span><span class="lbl"><span class="badge badge-ai">🧠 AI弹幕</span></span></label>
+        <label id="opt-ai-cm" class="switch opt-hide"><input type="checkbox" id="chk-ai-cm"><span class="track"></span><span class="lbl"><span class="badge badge-ai">💬🧠 AI评论</span></span></label>
         <label class="switch"><input type="checkbox" id="chk-replies"><span class="track"></span><span class="lbl">楼中楼</span></label>
       </div>
       <div class="row" id="row-advanced" style="margin-top:10px">
         <span class="inl">页数 <input type="number" id="max-pages" value="0" min="0" title="0=全部"></span>
+        <span class="inl">评论≤ <input type="number" id="max-comments" value="0" min="0" title="评论条数上限（滑动窗口），0=不限"></span>
+        <span class="inl">间隔 <input type="number" id="rate-delay" value="400" min="100" step="50" title="评论翻页间隔（毫秒，防风控）">ms</span>
         <span class="inl">字幕
           <select id="sub-lan">
             <option value="ai-zh">中文AI</option>
@@ -261,12 +269,20 @@
 
       <div class="result-panel" id="panel-summary">
         <h3>🤖 AI 字幕总结 <span class="flex"></span><button class="btn-mini" id="btn-summary-copy">📋 复制</button></h3>
+        <details class="think" id="summary-think" style="display:none"><summary>🤔 思考过程</summary><div class="summary-body think-body" id="summary-think-body"></div></details>
         <div class="summary-body" id="summary-body"></div>
       </div>
 
       <div class="result-panel" id="panel-ai-dm">
         <h3>🧠 AI 弹幕分析 <span class="flex"></span><button class="btn-mini" id="btn-ai-dm-copy">📋 复制</button></h3>
+        <details class="think" id="ai-dm-think" style="display:none"><summary>🤔 思考过程</summary><div class="summary-body think-body" id="ai-dm-think-body"></div></details>
         <div class="summary-body" id="ai-dm-body"></div>
+      </div>
+
+      <div class="result-panel" id="panel-ai-cm">
+        <h3>💬🧠 AI 评论分析（总结+情感） <span class="flex"></span><button class="btn-mini" id="btn-ai-cm-copy">📋 复制</button></h3>
+        <details class="think" id="ai-cm-think" style="display:none"><summary>🤔 思考过程</summary><div class="summary-body think-body" id="ai-cm-think-body"></div></details>
+        <div class="summary-body" id="ai-cm-body"></div>
       </div>
 
       <div class="card">

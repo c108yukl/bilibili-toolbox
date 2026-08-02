@@ -7,8 +7,13 @@ syncServerTime();
 let activePort = null;   // 当前连接的前端端口（popup），可为 null（headless）
 let running = false;     // 是否有任务在执行
 let cancelled = false;   // 取消标记
-let currentAbort = null; // 当前请求的 AbortController
-let aiAbort = null;      // AI 流式请求的 AbortController
+let currentAbort = null; // 当前请求的 AbortController（普通 API 请求）
+const aiAborts = new Set(); // 所有在途 AI 流式请求的 AbortController（支持并发，统一取消）
+
+// 注册/注销一个 AI 请求控制器；取消任务时全部 abort
+function makeAiAbort() { const c = new AbortController(); aiAborts.add(c); return c; }
+function releaseAiAbort(c) { aiAborts.delete(c); }
+function abortAllAi() { for (const c of aiAborts) c.abort(); }
 
 // ============ Settings ============
 let devMode = false;
@@ -126,14 +131,34 @@ async function fetchVideoInfo(bvid, cookie) {
 }
 
 // ============ Danmaku ============
-async function fetchDanmaku(cid, cookie) {
+// 弹幕抓取：有登录 Cookie 时优先走分段接口 seg.so（protobuf，弹幕远多于 list.so；
+// 部分高密度视频 list.so 只返回少量抽样），再与 list.so 对比取更多的一份；无 Cookie 直接用 list.so
+async function fetchDanmaku(cid, cookie, duration) {
   progress(`[弹幕] 正在获取 (cid=${cid})...`);
-  const resp = await biliFetch(
+  let dms = [];
+  if (cookie) {
+    const segCount = duration ? Math.max(1, Math.ceil(duration / 360)) : 1;
+    for (let i = 1; i <= segCount && !cancelled; i++) {
+      try {
+        const resp = await biliFetch(
+          `https://api.bilibili.com/x/v2/dm/web/seg.so?oid=${cid}&type=1&segment_index=${i}`,
+          { cookie }
+        );
+        const buf = await resp.arrayBuffer();
+        dms = dms.concat(parseDanmakuProto(buf));
+      } catch (e) {
+        if (e.message !== 'CANCELLED') progress(`  [弹幕] 分段 ${i} 获取失败: ${e.message}`);
+      }
+    }
+  }
+  // list.so 兜底/对比：某些情况下（Cookie 失效、新视频）它反而更多，取多的一方
+  const listResp = await biliFetch(
     `https://api.bilibili.com/x/v1/dm/list.so?oid=${cid}`,
     { cookie }
   );
-  const xmlText = await resp.text();
-  const dms = parseDanmakuXML(xmlText);
+  const listDms = parseDanmakuXML(await listResp.text());
+  if (listDms.length > dms.length) dms = listDms;
+  dms.sort((a, b) => a.dm_time - b.dm_time);
   progress(`[弹幕] 共 ${dms.length} 条`);
   for (const dm of dms.slice(0, 10)) {
     progress(`   [${dm.dm_time.toFixed(1)}s] ${dm.text}`);
@@ -322,10 +347,12 @@ async function downloadSubtitle(subtitles, cookie, lanCode) {
 }
 
 // ============ Task: Danmaku ============
-async function handleDanmaku(bvid, cid, params) {
+// 抓取弹幕 + 生成文件 + 热词统计；AI 分析由 processOneVideo 末尾并发执行
+// 返回弹幕数组（供 AI 分析使用），取消/失败返回 null
+async function handleDanmaku(bvid, cid, params, duration) {
   const fmt = params.saveFormat;
-  const dms = await fetchDanmaku(cid, params.cookie);
-  if (cancelled) return;
+  const dms = await fetchDanmaku(cid, params.cookie, duration);
+  if (cancelled) return null;
 
   const flat = formatDanmakuFlat(dms);
   let content = '';
@@ -349,7 +376,7 @@ async function handleDanmaku(bvid, cid, params) {
   send('file', { task: 'danmaku', filename: `${filenameBase}.${fmt}`, content, mimeType });
   success(`✅ 弹幕完成: ${dms.length} 条`);
 
-  // 弹幕热词
+  // 弹幕热词（本地统计，不走 AI）
   if (params.wordCloud && !cancelled) {
     const words = danmakuWordCloud(dms, params.cloudTopN || 30);
     send('cloud', { bvid, words });
@@ -366,61 +393,17 @@ async function handleDanmaku(bvid, cid, params) {
     }
   }
 
-  // AI 弹幕分析（流式）
-  if (params.aiDanmaku && !cancelled) {
-    try {
-      const aiCfg = await getStoredSettings();
-      const text = buildDanmakuText(dms, aiCfg.aiDanmakuMaxItems || 500);
-      if (!text) {
-        progress('🤖 [AI弹幕] 无弹幕可分析');
-      } else {
-        progress('🤖 AI 正在分析弹幕（流式输出）...');
-        aiAbort = new AbortController();
-        const prompt = aiCfg.aiDanmakuPrompt || AI_DEFAULTS.aiDanmakuPrompt;
-        const analysis = await aiStream(text, prompt, aiCfg, (chunk, full) => {
-          if (cancelled) { aiAbort.abort(); return; }
-          send('ai-dm', { bvid, partial: full, done: false });
-        }, aiAbort.signal);
-        if (cancelled || !analysis) return;
-        send('ai-dm', { bvid, partial: analysis, done: true });
-        send('file', {
-          task: 'analysis',
-          filename: `analysis_${bvid}.md`,
-          content: analysis,
-          mimeType: 'text/markdown'
-        });
-        if (aiCfg.aiSaveJson !== false) {
-          send('file', {
-            task: 'analysis-json',
-            filename: `analysis_${bvid}.json`,
-            content: genJSON({
-              bvid,
-              danmaku_count: dms.length,
-              analyzed_lines: text.split('\n').length,
-              generated_at: new Date().toISOString(),
-              analysis
-            }),
-            mimeType: 'application/json'
-          });
-        }
-        success('🤖 AI 弹幕分析完成');
-      }
-    } catch (e) {
-      if (e.name === 'AbortError' || e.message === 'CANCELLED' || cancelled) {
-        error('⛔ AI 弹幕分析已取消');
-      } else {
-        error(`🤖 AI 弹幕分析失败: ${e.message}`);
-      }
-    } finally {
-      aiAbort = null;
-    }
-  }
+  return dms;
 }
 
 // ============ Task: Comments ============
+// 翻页抓取评论（支持页数/条数上限 + 可调速率的滑动窗口），返回评论数组
+// 滑动窗口：maxComments > 0 时达到目标条数立即停止，超出部分截断（保留热门在前）
 async function handleComments(bvid, aid, params) {
   const fmt = params.saveFormat;
   const maxPages = params.maxPages || 0;
+  const maxComments = params.maxComments || 0; // 0 = 不限条数
+  const rateDelay = params.commentRateDelay || 400; // 评论翻页间隔（毫秒）
   const withReplies = params.withReplies;
   const MAX_ITEMS = 10000;
   const EMPTY_BREAK = 2;
@@ -433,8 +416,9 @@ async function handleComments(bvid, aid, params) {
   let usingPageApi = false; // 一旦降级到 page 接口就保持使用
 
   while (true) {
-    if (cancelled) return;
+    if (cancelled) return null;
     if (maxPages > 0 && page > maxPages) { progress(`  已达目标页数 ${maxPages}，停止`); break; }
+    if (maxComments > 0 && allItems.length >= maxComments) { progress(`  已达目标条数 ${maxComments}，停止`); break; }
     if (allItems.length > MAX_ITEMS) { progress(`  达到安全上限 ${MAX_ITEMS}，停止`); break; }
 
     let data;
@@ -444,13 +428,13 @@ async function handleComments(bvid, aid, params) {
       try {
         data = await fetchCommentPageCursor(aid, cursor, params.cookie);
       } catch (e) {
-        if (cancelled) return;
+        if (cancelled) return null;
         progress(`  [评论] 主流API被风控，切换备用接口...`);
         data = await fetchCommentPageByPage(aid, page, params.cookie);
         usingPageApi = true;
       }
     }
-    if (cancelled) return;
+    if (cancelled) return null;
 
     const replies = data.replies || [];
     const cursorData = data.cursor || {};
@@ -463,7 +447,7 @@ async function handleComments(bvid, aid, params) {
       emptyStreak = 0;
       let replyCount = 0;
       for (const c of replies) {
-        if (cancelled) return;
+        if (cancelled) return null;
         let subReplies = [];
         if (withReplies && (c.rcount || 0) > 0) {
           subReplies = await fetchReplies(aid, c.rpid, c.rcount, params.cookie);
@@ -471,12 +455,15 @@ async function handleComments(bvid, aid, params) {
         }
         allItems.push({ comment: c, replies: subReplies });
         replyCount += subReplies.length;
+        // 滑动窗口：逐条累计，达到目标条数立即停止本页
+        if (maxComments > 0 && allItems.length >= maxComments) break;
       }
       progress(`  第${page}页 +${replies.length} 评论 / +${replyCount} 回复 (累计 ${allItems.length} / ${knownTotal || '?'})`);
     }
 
     if (cursorData.is_end) { progress(`  已到最后一页`); break; }
     if (knownTotal && allItems.length >= knownTotal) { progress(`  已获取全部 ${knownTotal} 条`); break; }
+    if (maxComments > 0 && allItems.length >= maxComments) { progress(`  已达目标条数 ${maxComments}，停止`); break; }
 
     if (usingPageApi) {
       cursor = page + 1;
@@ -485,10 +472,15 @@ async function handleComments(bvid, aid, params) {
       if (!cursor) break;
     }
     page++;
-    await sleep(400);
+    await sleep(rateDelay);
   }
 
-  if (cancelled) return;
+  if (cancelled) return null;
+
+  // 滑动窗口截断：只保留前 maxComments 条（超出的页数据丢弃）
+  if (maxComments > 0 && allItems.length > maxComments) {
+    allItems.length = maxComments;
+  }
 
   const totalR = allItems.reduce((s, i) => s + (i.replies?.length || 0), 0);
   progress(`\n[评论] 完成: ${allItems.length} 评论, ${totalR} 回复`);
@@ -531,9 +523,194 @@ async function handleComments(bvid, aid, params) {
 
   send('file', { task: 'comments', filename: `${filenameBase}.${fmt}`, content, mimeType });
   success(`✅ 评论完成: ${allItems.length} 评论, ${totalR} 回复`);
+  return allItems;
+}
+
+// ============ AI 分析（弹幕 / 字幕 / 评论，可并发） ============
+// 三个函数各自独立，供 processOneVideo 以 Promise.all 并发执行；
+// 均支持：流式输出（含思考过程 reasoning）、MD + 结构化 JSON 保存、取消
+
+// AI 弹幕分析：去重后交给 AI 分析情绪/话题/名场面/有趣精选
+// 支持时间窗口（aiDmStart/aiDmEnd，如 "2:30"~"10:00"）：只分析视频某一段的弹幕
+async function runAiDanmakuAnalysis(bvid, dms, params) {
+  if (cancelled) return;
+  try {
+    const aiCfg = await getStoredSettings();
+    const winDms = filterByWindow(dms, d => d.dm_time, aiCfg.aiDmStart, aiCfg.aiDmEnd);
+    const text = buildDanmakuText(winDms, aiCfg.aiDanmakuMaxItems || 500);
+    if (!text) { progress('🤖 [AI弹幕] 无弹幕可分析'); return; }
+    const range = (parseTimeWindow(aiCfg.aiDmStart) != null || parseTimeWindow(aiCfg.aiDmEnd) != null)
+      ? `（时间窗 ${aiCfg.aiDmStart || '0:00'} ~ ${aiCfg.aiDmEnd || '结尾'}，${winDms.length}/${dms.length} 条）` : '';
+    progress(`🤖 AI 正在分析弹幕（流式输出）...${range}`);
+    const prompt = aiCfg.aiDanmakuPrompt || AI_DEFAULTS.aiDanmakuPrompt;
+    const controller = makeAiAbort();
+    try {
+      const { content: analysis, reasoning } = await callAi(text, prompt, aiCfg, controller,
+        (full, thinking) => send('ai-dm', { bvid, partial: full, done: false, thinking }));
+      if (cancelled || !analysis) return;
+      send('ai-dm', { bvid, partial: analysis, done: true, thinking: reasoning });
+      send('file', {
+        task: 'analysis',
+        filename: `analysis_${bvid}.md`,
+        content: analysis,
+        mimeType: 'text/markdown'
+      });
+      if (aiCfg.aiSaveJson !== false) {
+        send('file', {
+          task: 'analysis-json',
+          filename: `analysis_${bvid}.json`,
+          content: genJSON({
+            bvid,
+            danmaku_count: dms.length,
+            analyzed_lines: text.split('\n').length,
+            generated_at: new Date().toISOString(),
+            analysis,
+            thinking: reasoning || undefined
+          }),
+          mimeType: 'application/json'
+        });
+      }
+      success('🤖 AI 弹幕分析完成');
+    } finally {
+      releaseAiAbort(controller);
+    }
+  } catch (e) {
+    if (e.name === 'AbortError' || e.message === 'CANCELLED' || cancelled) {
+      error('⛔ AI 弹幕分析已取消');
+    } else {
+      error(`🤖 AI 弹幕分析失败: ${e.message}`);
+    }
+  }
+}
+
+// AI 字幕总结：MD 总结 + 结构化 JSON（标题/UP主/时间）
+// 支持时间窗口（aiSubStart/aiSubEnd，如 "0:00"~"5:00"）：只总结视频某一段的字幕
+async function runAiSubtitleSummary(bvid, subs, lan, videoData, params) {
+  if (cancelled) return;
+  try {
+    const aiCfg = await getStoredSettings();
+    const winSubs = filterByWindow(subs, s => s.from, aiCfg.aiSubStart, aiCfg.aiSubEnd);
+    const range = (parseTimeWindow(aiCfg.aiSubStart) != null || parseTimeWindow(aiCfg.aiSubEnd) != null)
+      ? `（时间窗 ${aiCfg.aiSubStart || '0:00'} ~ ${aiCfg.aiSubEnd || '结尾'}，${winSubs.length}/${subs.length} 条）` : '';
+    progress(`🤖 AI 正在总结字幕（流式输出）...${range}`);
+    const text = buildAIText(winSubs, aiCfg);
+    const prompt = aiCfg.aiPrompt || AI_DEFAULTS.aiPrompt;
+    const controller = makeAiAbort();
+    try {
+      const { content: summary, reasoning } = await callAi(text, prompt, aiCfg, controller,
+        (full, thinking) => send('summary', { bvid, lan, partial: full, done: false, thinking }));
+      if (cancelled || !summary) return;
+      send('summary', { bvid, lan, partial: summary, done: true, thinking: reasoning });
+      send('file', {
+        task: 'summary',
+        filename: `summary_${bvid}_${lan}.md`,
+        content: summary,
+        mimeType: 'text/markdown'
+      });
+      if (aiCfg.aiSaveJson !== false) {
+        const data = videoData.data || {};
+        send('file', {
+          task: 'summary-json',
+          filename: `summary_${bvid}_${lan}.json`,
+          content: genJSON({
+            bvid,
+            title: data.title || '',
+            url: `https://www.bilibili.com/video/${bvid}`,
+            up: data.owner?.name || '',
+            up_mid: data.owner?.mid || null,
+            subtitle_lan: lan,
+            subtitle_count: subs.length,
+            generated_at: new Date().toISOString(),
+            summary,
+            thinking: reasoning || undefined
+          }),
+          mimeType: 'application/json'
+        });
+      }
+      success('🤖 AI 总结完成');
+    } finally {
+      releaseAiAbort(controller);
+    }
+  } catch (e) {
+    if (e.name === 'AbortError' || e.message === 'CANCELLED' || cancelled) {
+      error('⛔ AI 总结已取消');
+    } else {
+      error(`🤖 AI 总结失败: ${e.message}`);
+    }
+  }
+}
+
+// AI 评论分析：总结评论区 + 情感倾向分析（流式输出）
+async function runAiCommentsAnalysis(bvid, items, params) {
+  if (cancelled) return;
+  try {
+    const aiCfg = await getStoredSettings();
+    const text = buildCommentText(items, aiCfg.aiCommentMaxItems || 300);
+    if (!text) { progress('🤖 [AI评论] 无评论可分析'); return; }
+    progress(`🤖 AI 正在分析评论（${items.length} 条，流式输出）...`);
+    const prompt = aiCfg.aiCommentPrompt || AI_DEFAULTS.aiCommentPrompt;
+    const controller = makeAiAbort();
+    try {
+      const { content: analysis, reasoning } = await callAi(text, prompt, aiCfg, controller,
+        (full, thinking) => send('ai-cm', { bvid, partial: full, done: false, thinking }));
+      if (cancelled || !analysis) return;
+      send('ai-cm', { bvid, partial: analysis, done: true, thinking: reasoning });
+      send('file', {
+        task: 'comment-analysis',
+        filename: `analysis_comments_${bvid}.md`,
+        content: analysis,
+        mimeType: 'text/markdown'
+      });
+      if (aiCfg.aiSaveJson !== false) {
+        send('file', {
+          task: 'comment-analysis-json',
+          filename: `analysis_comments_${bvid}.json`,
+          content: genJSON({
+            bvid,
+            comment_count: items.length,
+            analyzed_lines: text.split('\n').length,
+            generated_at: new Date().toISOString(),
+            analysis,
+            thinking: reasoning || undefined
+          }),
+          mimeType: 'application/json'
+        });
+      }
+      success('🤖 AI 评论分析完成');
+    } finally {
+      releaseAiAbort(controller);
+    }
+  } catch (e) {
+    if (e.name === 'AbortError' || e.message === 'CANCELLED' || cancelled) {
+      error('⛔ AI 评论分析已取消');
+    } else {
+      error(`🤖 AI 评论分析失败: ${e.message}`);
+    }
+  }
+}
+
+// AI 统一调用入口：按设置选择流式/非流式，并转发思考过程
+// onProgress(fullText, fullThinking) 仅流式时实时回调（正文/思考各一块进度）
+// ⚠️ 注意：正文/思考状态必须为每次调用私有！
+// 此前用模块级共享对象，三个 AI 任务并发时相互覆盖，导致
+// “字幕面板思考正确但正文是弹幕内容/截断”的串扰 bug
+async function callAi(text, prompt, aiCfg, controller, onProgress) {
+  if (aiCfg.aiStream === false) return aiComplete(text, prompt, aiCfg);
+  let curFull = '';
+  let curThinking = '';
+  return aiStream(text, prompt, aiCfg, (chunk, fullText) => {
+    if (cancelled) { controller.abort(); return; }
+    curFull = fullText;
+    onProgress(fullText, curThinking);
+  }, controller.signal, (rChunk, rFull) => {
+    curThinking = rFull;
+    onProgress(curFull, rFull);
+  });
 }
 
 // ============ Task: Subtitle ============
+// 抓取字幕 + 生成文件；AI 总结由 processOneVideo 末尾并发执行
+// 返回 { body, lan }（供 AI 总结使用）；无字幕/取消返回 null
 async function handleSubtitle(bvid, cid, videoData, params) {
   const fmt = params.saveFormat;
   const lanCode = params.subLan;
@@ -541,10 +718,10 @@ async function handleSubtitle(bvid, cid, videoData, params) {
   const result = await fetchSubtitle(cid, videoData, params.cookie);
   if (!result) {
     error('❌ 该视频没有字幕');
-    return;
+    return null;
   }
   const { body: subs, lan } = result;
-  if (cancelled) return;
+  if (cancelled) return null;
 
   progress(`[字幕] 共 ${subs.length} 条字幕片段`);
   const filenameBase = `subtitle_${bvid}_${lan}`;
@@ -573,67 +750,7 @@ async function handleSubtitle(bvid, cid, videoData, params) {
 
   send('file', { task: 'subtitle', filename: `${filenameBase}.${fmt}`, content, mimeType });
   success(`✅ 字幕完成: ${subs.length} 条`);
-
-  // AI 字幕总结（流式 + 结构化输出）
-  if (params.aiSummary && !cancelled) {
-    try {
-      const aiCfg = await getStoredSettings();
-      progress('🤖 AI 正在总结字幕（流式输出）...');
-
-      let finalText = '';
-      aiAbort = new AbortController();
-      const summaryPromise = aiCfg.aiStream === false
-        ? aiSummarize(subs, aiCfg).then(t => { finalText = t; return t; })
-        : aiSummarizeStream(subs, aiCfg, (chunk, full) => {
-          if (cancelled) { aiAbort.abort(); return; }
-          finalText = full;
-          send('summary', { bvid, lan, partial: full, done: false });
-        }, aiAbort.signal);
-
-      const summary = await summaryPromise;
-      if (cancelled || !summary) return;
-
-      finalText = summary;
-      send('summary', { bvid, lan, partial: summary, done: true });
-      send('file', {
-        task: 'summary',
-        filename: `summary_${bvid}_${lan}.md`,
-        content: summary,
-        mimeType: 'text/markdown'
-      });
-
-      // 结构化 JSON：标题/UP主/摘要等（可设置开关）
-      if (aiCfg.aiSaveJson !== false) {
-        const data = videoData.data || {};
-        const structured = {
-          bvid,
-          title: data.title || '',
-          url: `https://www.bilibili.com/video/${bvid}`,
-          up: data.owner?.name || '',
-          up_mid: data.owner?.mid || null,
-          subtitle_lan: lan,
-          subtitle_count: subs.length,
-          generated_at: new Date().toISOString(),
-          summary
-        };
-        send('file', {
-          task: 'summary-json',
-          filename: `summary_${bvid}_${lan}.json`,
-          content: genJSON(structured),
-          mimeType: 'application/json'
-        });
-      }
-      success('🤖 AI 总结完成');
-    } catch (e) {
-      if (e.name === 'AbortError' || e.message === 'CANCELLED' || cancelled) {
-        error('⛔ AI 总结已取消');
-      } else {
-        error(`🤖 AI 总结失败: ${e.message}`);
-      }
-    } finally {
-      aiAbort = null;
-    }
-  }
+  return { body: subs, lan };
 }
 
 // ============ Settings ============
@@ -715,6 +832,7 @@ async function processOneVideo(bvid, params, index, total) {
   const owner = videoInfo.data.owner || {};
 
   // 2. UP 主信息
+  // 2. UP 主信息
   if (params.upInfo && !cancelled) {
     try {
       const up = owner.mid ? await fetchUpInfo(owner.mid, params.cookie) : null;
@@ -733,23 +851,37 @@ async function processOneVideo(bvid, params, index, total) {
     }
   }
 
-  // 3. Danmaku
+  // 3. Danmaku（抓完立即启动 AI 弹幕分析，与评论爬取并行）
+  const aiTasks = []; // 收集 AI 分析任务，数据就绪即启动，末尾统一等待
+  let danmakuData = null;
   if (params.danmaku && !cancelled) {
-    try { await handleDanmaku(bvid, cid, params); }
+    try { danmakuData = await handleDanmaku(bvid, cid, params, videoInfo.data.duration); }
     catch (e) { if (e.message !== 'CANCELLED') error(`❌ 弹幕出错: ${e.message}`); }
   }
+  if (params.aiDanmaku && danmakuData) aiTasks.push(runAiDanmakuAnalysis(bvid, danmakuData, params));
 
-  // 4. Subtitle
+  // 4. Subtitle（抓完立即启动 AI 字幕总结，与评论爬取并行）
+  let subtitleData = null;
   if (params.subtitle && !cancelled) {
-    try { await handleSubtitle(bvid, cid, videoInfo.data, params); }
+    try { subtitleData = await handleSubtitle(bvid, cid, videoInfo.data, params); }
     catch (e) { if (e.message !== 'CANCELLED') error(`❌ 字幕出错: ${e.message}`); }
   }
+  if (params.aiSummary && subtitleData) aiTasks.push(runAiSubtitleSummary(bvid, subtitleData.body, subtitleData.lan, videoInfo, params));
 
-  // 5. Comments
+  // 5. Comments（滑动窗口 + 速率控制；期间上面的弹幕/字幕 AI 分析已在后台运行）
+  let commentsData = null;
   if (params.comments && !cancelled) {
     progress(`[评论] 开始获取...`);
-    try { await handleComments(bvid, aid, params); }
+    try { commentsData = await handleComments(bvid, aid, params); }
     catch (e) { if (e.message !== 'CANCELLED') error(`❌ 评论出错: ${e.message}`); }
+  }
+  if (params.aiComments && commentsData) aiTasks.push(runAiCommentsAnalysis(bvid, commentsData, params));
+
+  // 6. AI 分析统一等待完成（弹幕/字幕任务早已启动，评论任务最后加入；全程可取消）
+  if (cancelled) return;
+  if (aiTasks.length > 0) {
+    progress(`🤖 AI 分析启动（${aiTasks.length} 个任务并发，弹幕/字幕无需等待评论）...`);
+    await Promise.all(aiTasks);
   }
 }
 
@@ -764,7 +896,7 @@ chrome.runtime.onConnect.addListener((port) => {
       if (running) { // 已有任务 → 先取消旧的
         cancelled = true;
         if (currentAbort) currentAbort.abort();
-        if (aiAbort) aiAbort.abort();
+        abortAllAi();
         await sleep(300);
         cancelled = false;
       }
@@ -772,7 +904,7 @@ chrome.runtime.onConnect.addListener((port) => {
     } else if (msg.action === 'cancel') {
       cancelled = true;
       if (currentAbort) currentAbort.abort();
-      if (aiAbort) aiAbort.abort();
+      abortAllAi();
       try { port.postMessage({ type: 'abort', message: '已取消' }); } catch (e) { }
     } else if (msg.action === 'status') {
       try { port.postMessage({ type: 'status', running, cancelled }); } catch (e) { }
@@ -792,6 +924,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+  if (msg.action === 'checkVideo') {
+    // 悬浮球：查询视频信息（标题 + 弹幕数 + 是否有字幕），用于播放入场提示
+    (async () => {
+      const resp = { ok: true, bvid: msg.bvid, title: '', danmaku: 0, hasSubtitle: false };
+      try {
+        const info = await fetchVideoInfo(msg.bvid, '');
+        resp.title = info.data?.title || '';
+        resp.danmaku = info.data?.stat?.danmaku || 0;
+        const cid = info.data?.cid;
+        if (cid) {
+          const sub = await fetchSubtitle(cid, info.data, '');
+          resp.hasSubtitle = !!(sub && sub.body && sub.body.length);
+        }
+      } catch (e) { }
+      try { sendResponse(resp); } catch (e) { }
+    })();
+    return true; // 异步响应
+  }
   if (msg.action === 'floatScrape') {
     const bvid = extractBVID(msg.bvid);
     if (!bvid) {
@@ -802,7 +952,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (running) {
         cancelled = true;
         if (currentAbort) currentAbort.abort();
-        if (aiAbort) aiAbort.abort();
+        abortAllAi();
         await sleep(300);
         cancelled = false;
       }
@@ -818,10 +968,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         subtitle: mode !== 'cm',
         aiSummary: mode === 'ai',
         aiDanmaku: mode === 'ai',
+        aiComments: mode === 'ai',
         wordCloud: false,
         upInfo: false,
         withReplies: false,
         maxPages: mode === 'cm' ? (cfg.defaultMaxPages || 3) : 0,
+        maxComments: mode === 'cm' ? (cfg.commentMaxItems || 0) : 0,
+        commentRateDelay: cfg.commentRateDelay || 400,
         subLan: cfg.defaultSubLan || 'ai-zh',
         saveFormat: cfg.defaultFormat || 'json',
         cookie: '',
@@ -875,7 +1028,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (running) { // 已有任务 → 先取消旧的
     cancelled = true;
     if (currentAbort) currentAbort.abort();
-    if (aiAbort) aiAbort.abort();
+    abortAllAi();
     await sleep(300);
     cancelled = false;
   }
@@ -898,8 +1051,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     subtitle: !isComments,
     aiSummary: isAI,
     aiDanmaku: isAI,
+    aiComments: isAI,
     withReplies: !!cfg.defaultReplies,
     maxPages: isComments ? (cfg.defaultMaxPages || 3) : 0,
+    maxComments: isComments ? (cfg.commentMaxItems || 0) : 0,
+    commentRateDelay: cfg.commentRateDelay || 400,
     subLan: cfg.defaultSubLan || 'ai-zh',
     saveFormat: cfg.defaultFormat || 'json',
     cookie: '',

@@ -71,6 +71,8 @@ def parse_args():
     p.add_argument("--replies", action="store_true", help="同时提取评论的回复(楼中楼)")
     p.add_argument("--page", type=int, default=1, help="评论起始页码 (默认1)")
     p.add_argument("--max-pages", type=int, default=0, help="目标页数, 0=全部 (默认0)")
+    p.add_argument("--max-comments", type=int, default=0,
+                   help="评论条数上限(滑动窗口), 达到立即停止, 0=不限 (默认0)")
     p.add_argument("--max-age", type=int, default=30, help="缓存有效期秒, 0=禁用 (默认30)")
     p.add_argument(
         "--save",
@@ -140,7 +142,7 @@ async def main() -> int:
 
     if do_comments or args.all_pages:
         try:
-            if args.all_pages or args.max_pages:
+            if args.all_pages or args.max_pages or args.max_comments:
                 await get_all_comments(
                     bvid,
                     max_age=max_age,
@@ -148,6 +150,7 @@ async def main() -> int:
                     save_fmt=args.save,
                     with_replies=args.replies,
                     max_pages=args.max_pages,
+                    max_comments=args.max_comments,
                 )
             else:
                 await get_comments(

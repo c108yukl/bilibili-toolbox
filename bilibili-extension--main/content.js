@@ -21,19 +21,56 @@
   let accent1 = THEMES.aurora[0];
   let accent2 = THEMES.aurora[1];
   let enabled = true;
+  let ballMsgEnabled = true; // 悬浮球入场提示开关
+  let ballMsgCustom = '';    // 自定义提示文本（每行一条）
   let ball = null;
   let menu = null;
   let toast = null;
+  let bubble = null;
+  let bubbleTimer = null;
 
   async function loadPrefs() {
     try {
       const s = await chrome.storage.local.get('settings');
       const cfg = s.settings || {};
       enabled = cfg.showFloatingBall !== false;
+      ballMsgEnabled = cfg.ballMsgEnabled !== false;
+      ballMsgCustom = cfg.ballMsgCustom || '';
       const t = THEMES[cfg.theme] || THEMES.aurora;
       accent1 = t[0];
       accent2 = t[1];
     } catch (e) { }
+  }
+
+  // ---- 动效样式（关键帧 + 提示气泡）----
+  function injectStyles() {
+    if (document.getElementById('__bili_float_style')) return;
+    const st = document.createElement('style');
+    st.id = '__bili_float_style';
+    st.textContent = `
+      @keyframes __bili_ball_pop { 0%{transform:scale(1)} 30%{transform:scale(1.28) rotate(-6deg)} 60%{transform:scale(.9)} 100%{transform:scale(1)} }
+      @keyframes __bili_ball_glow { 0%,100%{box-shadow:0 6px 20px rgba(0,0,0,.45),0 0 0 0 var(--bili-glow,rgba(0,200,255,.55))} 50%{box-shadow:0 6px 20px rgba(0,0,0,.45),0 0 0 16px transparent} }
+      @keyframes __bili_bubble_in { from{opacity:0;transform:translateX(10px) scale(.92)} to{opacity:1;transform:none} }
+      .__bili_celebrate { animation: __bili_ball_pop .55s ease 2, __bili_ball_glow .9s ease 2; }
+      .__bili_bubble {
+        position: fixed; z-index: 2147483646; pointer-events: none;
+        background: #141a2e; color: #e6e9f5; border: 1px solid var(--bili-accent,#00c8ff);
+        border-radius: 10px; padding: 8px 14px; font-size: 12px; max-width: 320px;
+        font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.6;
+        box-shadow: 0 6px 24px rgba(0,0,0,.5); white-space: pre-line; word-break: break-word;
+        opacity: 0; visibility: hidden; transition: opacity .3s, visibility .3s;
+      }
+      .__bili_bubble.show { opacity: 1; visibility: visible; animation: __bili_bubble_in .28s ease; }
+      .__bili_bubble::after {
+        content: ''; position: absolute; right: -6px; top: 50%; transform: translateY(-50%) rotate(45deg);
+        width: 10px; height: 10px; background: #141a2e; border-right: 1px solid var(--bili-accent,#00c8ff);
+        border-top: 1px solid var(--bili-accent,#00c8ff); border-radius: 2px;
+      }
+      .__bili_bubble.flip::after {
+        right: auto; left: -6px; border-right: none; border-top: none;
+        border-left: 1px solid var(--bili-accent,#00c8ff); border-bottom: 1px solid var(--bili-accent,#00c8ff);
+      }`;
+    document.head.appendChild(st);
   }
 
   // ---- Toast ----
@@ -50,6 +87,99 @@
     if (color) toast.style.borderColor = color;
     document.body.appendChild(toast);
     setTimeout(() => { if (toast) { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 450); } }, 3500);
+  }
+
+  // ---- 悬浮球提示气泡（一次性展示，不轮播）----
+  function showBubble(text) {
+    if (!bubble) {
+      bubble = document.createElement('div');
+      bubble.className = '__bili_bubble';
+      document.body.appendChild(bubble);
+    }
+    bubble.textContent = text;
+    // 先按实际尺寸定位置：默认在球左侧；左侧放不下时翻转到球右侧，保证球不会遮住文字
+    bubble.classList.remove('show', 'flip');
+    bubble.style.left = '0px';
+    bubble.style.top = '0px';
+    const bw = bubble.offsetWidth;
+    const bh = bubble.offsetHeight;
+    const gap = 14;
+    const r = ball.getBoundingClientRect();
+    let left;
+    if (r.left > bw + gap + 8) {
+      left = r.left - bw - gap;
+    } else {
+      bubble.classList.add('flip');
+      left = r.right + gap;
+    }
+    left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - bw - 8));
+    const top = Math.min(Math.max(8, r.top + r.height / 2 - bh / 2), Math.max(8, window.innerHeight - bh - 8));
+    bubble.style.left = left + 'px';
+    bubble.style.top = top + 'px';
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(() => bubble.classList.remove('show'), 7000);
+  }
+
+  // 弹跳 + 光晕动效
+  function playBallCelebrate() {
+    if (!ball) return;
+    ball.classList.remove('__bili_celebrate');
+    void ball.offsetWidth; // 重启动画
+    ball.classList.add('__bili_celebrate');
+  }
+
+  // 入场提示：视频信息（标题/BV/弹幕/字幕）+ 预设文案 + 自定义文案，一次性整块显示
+  function showReadyMessages(info) {
+    const { bvid, title, hasSubtitle, danmaku } = info;
+    const lines = [];
+    if (title) lines.push(`🎬 ${title.length > 22 ? title.slice(0, 22) + '…' : title}`);
+    const meta = [];
+    meta.push(`📎 ${bvid}`);
+    meta.push(danmaku > 0 ? `弹幕 ${danmaku} 条` : '无弹幕');
+    meta.push(hasSubtitle ? '字幕 ✓' : '无字幕');
+    lines.push(meta.join(' · '));
+    lines.push('✅ 此视频可以分析了！');
+    if (ballMsgCustom) {
+      for (const t of ballMsgCustom.split(/\r?\n/).map(s => s.trim()).filter(Boolean)) lines.push(t);
+    }
+    playBallCelebrate();
+    showBubble(lines.join('\n'));
+  }
+
+  // 查询视频信息（标题 / 弹幕数 / 字幕可用性），触发入场提示
+  async function checkVideo() {
+    const bvid = getBvid();
+    if (!bvid) return;
+    try {
+      chrome.runtime.sendMessage({ action: 'checkVideo', bvid }, (resp) => {
+        if (chrome.runtime.lastError || !resp) return;
+        if (!enabled || ballMsgEnabled === false) return;
+        showReadyMessages(resp);
+      });
+    } catch (e) { }
+  }
+
+  // ---- SPA 路由监听：B站站内跳转（如点击推荐视频）不刷新页面，需监听 BV 变化 ----
+  let lastBvid = null;
+  function watchBvid() {
+    setInterval(() => {
+      const bv = getBvid();
+      if (bv === lastBvid) return;
+      lastBvid = bv;
+      if (!bv) {
+        // 离开视频页：收起悬浮球与气泡
+        closeMenu();
+        if (bubble) { bubble.remove(); bubble = null; }
+        if (ball) { ball.remove(); ball = null; }
+        return;
+      }
+      if (!ball) {
+        injectStyles();
+        buildBall();
+      }
+      if (enabled && ballMsgEnabled !== false) checkVideo();
+    }, 1000);
   }
 
   // ---- 悬浮球 ----
@@ -202,31 +332,44 @@
     }
   });
 
-  // 设置变化实时响应（悬浮球开关/主题）
+  // 设置变化实时响应（悬浮球开关/主题/提示）
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.settings) return;
     const cfg = changes.settings.newValue || {};
     const t = THEMES[cfg.theme] || THEMES.aurora;
     accent1 = t[0];
     accent2 = t[1];
+    enabled = cfg.showFloatingBall !== false;
+    ballMsgEnabled = cfg.ballMsgEnabled !== false;
+    ballMsgCustom = cfg.ballMsgCustom || '';
     if (ball) {
       ball.style.background = `linear-gradient(135deg, ${accent1}, ${accent2})`;
     }
     if (cfg.showFloatingBall === false) {
       closeMenu();
+      if (bubble) { bubble.remove(); bubble = null; }
       if (ball) { ball.remove(); ball = null; }
-    } else if (enabled !== true || cfg.showFloatingBall === true) {
-      if (!ball) buildBall();
+    } else if (!ball) {
+      // 重新启用：重建悬浮球并立即检查当前视频
+      injectStyles();
+      buildBall();
+      checkVideo();
     }
   });
 
   // ---- 启动 ----
   (async function init() {
     await loadPrefs();
-    if (!enabled) return;
-    // 视频页才显示（含 /video/ 或含 BV）
-    if (!getBvid()) return;
+    lastBvid = getBvid();
+    if (!enabled || !lastBvid) {
+      // 悬浮球关闭或不在视频页时，仍监听路由，进入视频页时自动呼出
+      watchBvid();
+      return;
+    }
+    injectStyles();
     buildBall();
-    // SPA 路由变化时 BV 可能更新（菜单标题不依赖，无需处理）
+    // 延迟入场：等页面渲染完成后再查询视频信息并播放提示
+    setTimeout(checkVideo, 2500);
+    watchBvid();
   })();
 })();

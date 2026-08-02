@@ -7,6 +7,8 @@ const DEFAULTS = {
   defaultFormat: 'json',
   defaultSubLan: 'ai-zh',
   defaultMaxPages: 0,
+  commentMaxItems: 0,      // 评论条数上限（滑动窗口），0=不限
+  commentRateDelay: 400,   // 评论翻页间隔（毫秒），速率控制
   subtitleTimeFormat: 'seconds',
   devMode: false,
   aiBaseUrl: 'https://api.deepseek.com',
@@ -20,11 +22,22 @@ const DEFAULTS = {
   theme: 'aurora',
   soundEnabled: true,
   aiStream: true,
+  aiThinking: true,        // 展示思考模型（reasoning_content）的推理过程
+  aiKeyPersist: false,     // 永久保存 API Key（明文存于 storage.local，需隐私确认）
+  aiMaxTokens: 4000,       // 单次回复最大 token（思考+正文），避免长分析被截断
+  aiDmStart: '',           // 弹幕分析时间窗口起始（mm:ss 或秒，空=不限）
+  aiDmEnd: '',             // 弹幕分析时间窗口结束
+  aiSubStart: '',          // 字幕总结时间窗口起始
+  aiSubEnd: '',            // 字幕总结时间窗口结束
+  ballMsgEnabled: true,    // 悬浮球入场提示（动效+文字）
+  ballMsgCustom: '',       // 悬浮球自定义提示文本（每行一条）
   aiSaveJson: true,
   aiTextOnly: true,
   aiMaxItems: 0,
   aiDanmakuPrompt: '你是B站弹幕分析助手。请分析以下弹幕（每行一条），用中文输出四部分：\n1. 弹幕情绪倾向（正面/负面/中立的大致占比）\n2. 热议话题（弹幕最关注的几个点）\n3. 名场面 / 高能时刻（被反复刷屏的梗或事件）\n4. 有趣弹幕精选（最多5条）\n\n弹幕内容：\n{text}',
   aiDanmakuMaxItems: 500,
+  aiCommentPrompt: '你是B站评论区分析助手。请分析以下评论（每条格式：用户名: 评论），用中文输出五部分：\n1. 总体情感倾向（正面/负面/中立的估算占比）\n2. 核心观点（评论区的主要共识或态度）\n3. 热议话题（讨论最集中的几个话题）\n4. 亮点评论精选（最多5条，附用户名）\n5. 争议点 / 建议（如有）\n\n评论内容：\n{text}',
+  aiCommentMaxItems: 300,
   cloudTopN: 30
 };
 
@@ -219,9 +232,12 @@ async function load() {
   $('def-format').value = cfg.defaultFormat;
   $('def-sub-lan').value = cfg.defaultSubLan;
   $('def-max-pages').value = cfg.defaultMaxPages;
+  $('comment-max-items').value = cfg.commentMaxItems || 0;
+  $('comment-rate-delay').value = cfg.commentRateDelay || 400;
   $('sub-time-format').value = cfg.subtitleTimeFormat || 'seconds';
   $('ai-api-key').value = (await getAiKey()) || '';
-  $('ai-api-key').setAttribute('placeholder', '仅保存在本浏览器会话中（浏览器重启后需重新输入）');
+  $('ai-api-key').setAttribute('placeholder', cfg.aiKeyPersist ? '已开启永久保存（明文存于本机浏览器）' : '仅保存在本浏览器会话中（浏览器重启后需重新输入）');
+  $('ai-key-persist').checked = !!cfg.aiKeyPersist;
   $('ai-base-url').value = cfg.aiBaseUrl || DEFAULTS.aiBaseUrl;
   $('ai-model').value = cfg.aiModel || DEFAULTS.aiModel;
   $('ai-prompt').value = cfg.aiPrompt || DEFAULTS.aiPrompt;
@@ -233,12 +249,22 @@ async function load() {
   $('show-ball').checked = cfg.showFloatingBall !== false;
   $('sound-enabled').checked = cfg.soundEnabled !== false;
   $('ai-stream').checked = cfg.aiStream !== false;
+  $('ai-thinking').checked = cfg.aiThinking !== false;
+  $('ai-max-tokens').value = cfg.aiMaxTokens || 4000;
+  $('ai-sub-start').value = cfg.aiSubStart || '';
+  $('ai-sub-end').value = cfg.aiSubEnd || '';
+  $('ai-dm-start').value = cfg.aiDmStart || '';
+  $('ai-dm-end').value = cfg.aiDmEnd || '';
   $('ai-save-json').checked = cfg.aiSaveJson !== false;
   $('ai-text-only').checked = cfg.aiTextOnly !== false;
   $('ai-max-items').value = cfg.aiMaxItems || 0;
   $('ai-danmaku-prompt').value = cfg.aiDanmakuPrompt || DEFAULTS.aiDanmakuPrompt;
   $('ai-danmaku-max-items').value = cfg.aiDanmakuMaxItems || 500;
+  $('ai-comment-prompt').value = cfg.aiCommentPrompt || DEFAULTS.aiCommentPrompt;
+  $('ai-comment-max-items').value = cfg.aiCommentMaxItems || 300;
   $('cloud-top-n').value = cfg.cloudTopN || 30;
+  $('ball-msg-enabled').checked = cfg.ballMsgEnabled !== false;
+  $('ball-msg-custom').value = cfg.ballMsgCustom || '';
   selectTheme(cfg.theme || 'aurora', true);
   await refreshCookieDisplay();
   if (await getAiKey()) fetchModels();
@@ -255,6 +281,8 @@ async function save() {
     defaultFormat: $('def-format').value,
     defaultSubLan: $('def-sub-lan').value,
     defaultMaxPages: parseInt($('def-max-pages').value) || 0,
+    commentMaxItems: Math.max(0, parseInt($('comment-max-items').value) || 0),
+    commentRateDelay: Math.min(10000, Math.max(100, parseInt($('comment-rate-delay').value) || 400)),
     subtitleTimeFormat: $('sub-time-format').value,
     aiBaseUrl: $('ai-base-url').value.trim(),
     aiModel: $('ai-model').value.trim(),
@@ -268,11 +296,22 @@ async function save() {
     theme: currentTheme,
     soundEnabled: $('sound-enabled').checked,
     aiStream: $('ai-stream').checked,
+    aiThinking: $('ai-thinking').checked,
+    aiKeyPersist: $('ai-key-persist').checked,
+    aiMaxTokens: Math.min(16000, Math.max(1000, parseInt($('ai-max-tokens').value) || 4000)),
+    aiDmStart: $('ai-dm-start').value.trim(),
+    aiDmEnd: $('ai-dm-end').value.trim(),
+    aiSubStart: $('ai-sub-start').value.trim(),
+    aiSubEnd: $('ai-sub-end').value.trim(),
+    ballMsgEnabled: $('ball-msg-enabled').checked,
+    ballMsgCustom: $('ball-msg-custom').value,
     aiSaveJson: $('ai-save-json').checked,
     aiTextOnly: $('ai-text-only').checked,
     aiMaxItems: parseInt($('ai-max-items').value) || 0,
     aiDanmakuPrompt: $('ai-danmaku-prompt').value.trim(),
     aiDanmakuMaxItems: Math.min(2000, Math.max(10, parseInt($('ai-danmaku-max-items').value) || 500)),
+    aiCommentPrompt: $('ai-comment-prompt').value.trim(),
+    aiCommentMaxItems: Math.min(5000, Math.max(10, parseInt($('ai-comment-max-items').value) || 300)),
     cloudTopN: Math.min(60, Math.max(10, parseInt($('cloud-top-n').value) || 30))
   };
   try {
@@ -314,6 +353,43 @@ $('btn-sound-test').addEventListener('click', playTestSound);
 $('btn-export').addEventListener('click', exportSettings);
 $('btn-import').addEventListener('click', importSettings);
 
+// ---- API Key 永久保存：隐私声明确认弹窗（需等待 3 秒） ----
+let persistCountdown = null;
+function openKeyPersistModal() {
+  const modal = $('key-persist-modal');
+  const btn = $('key-persist-confirm');
+  modal.hidden = false;
+  btn.disabled = true;
+  let left = 3;
+  btn.textContent = `我已知晓并同意（${left}）`;
+  clearInterval(persistCountdown);
+  persistCountdown = setInterval(() => {
+    left--;
+    if (left <= 0) {
+      clearInterval(persistCountdown);
+      btn.disabled = false;
+      btn.textContent = '我已知晓并同意';
+    } else {
+      btn.textContent = `我已知晓并同意（${left}）`;
+    }
+  }, 1000);
+}
+function closeKeyPersistModal(confirmed) {
+  clearInterval(persistCountdown);
+  $('key-persist-modal').hidden = true;
+  if (!confirmed) $('ai-key-persist').checked = false; // 取消则回滚开关
+}
+$('ai-key-persist').addEventListener('change', () => {
+  if ($('ai-key-persist').checked) {
+    openKeyPersistModal();
+  }
+});
+$('key-persist-confirm').addEventListener('click', () => closeKeyPersistModal(true));
+$('key-persist-cancel').addEventListener('click', () => closeKeyPersistModal(false));
+$('key-persist-modal').addEventListener('click', (e) => {
+  if (e.target === $('key-persist-modal')) closeKeyPersistModal(false); // 点遮罩=取消
+});
+
 // 输入 API Key 后自动获取模型列表（防抖 800ms）
 $('ai-api-key').addEventListener('input', () => {
   clearTimeout(modelFetchTimer);
@@ -325,3 +401,21 @@ $('ai-base-url').addEventListener('change', () => {
 });
 
 document.addEventListener('DOMContentLoaded', load);
+
+// ---- 左侧标签页切换（记住上次所在页）----
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === name);
+  });
+  document.querySelectorAll('.tab-page').forEach(p => {
+    p.classList.toggle('active', p.dataset.tab === name);
+  });
+  try { sessionStorage.setItem('optsTab', name); } catch (e) { }
+}
+document.querySelectorAll('.tab-btn').forEach(t => {
+  t.addEventListener('click', () => switchTab(t.dataset.tab));
+});
+try {
+  const saved = sessionStorage.getItem('optsTab');
+  if (saved && document.querySelector(`.tab-btn[data-tab="${saved}"]`)) switchTab(saved);
+} catch (e) { }
