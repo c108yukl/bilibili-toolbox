@@ -1,46 +1,4 @@
-const DEFAULTS = {
-  autoCookie: false,
-  defaultDanmaku: true,
-  defaultComments: false,
-  defaultSubtitle: false,
-  defaultReplies: false,
-  defaultFormat: 'json',
-  defaultSubLan: 'ai-zh',
-  defaultMaxPages: 0,
-  commentMaxItems: 0,      // 评论条数上限（滑动窗口），0=不限
-  commentRateDelay: 400,   // 评论翻页间隔（毫秒），速率控制
-  subtitleTimeFormat: 'seconds',
-  devMode: false,
-  aiBaseUrl: 'https://api.deepseek.com',
-  aiModel: 'deepseek-chat',
-  aiPrompt: '你是视频字幕分析助手。请用中文总结以下视频字幕，输出三部分：\n1. 主题概述（2-3句话）\n2. 核心要点（编号列表）\n3. 亮点金句（如有）\n\n字幕内容：\n{text}',
-  showBatch: true,
-  showOptsRow: true,
-  showAdvancedRow: true,
-  showCookie: true,
-  showFloatingBall: true,
-  theme: 'aurora',
-  soundEnabled: true,
-  aiStream: true,
-  aiThinking: true,        // 展示思考模型（reasoning_content）的推理过程
-  aiKeyPersist: false,     // 永久保存 API Key（明文存于 storage.local，需隐私确认）
-  aiMaxTokens: 4000,       // 单次回复最大 token（思考+正文），避免长分析被截断
-  aiDmStart: '',           // 弹幕分析时间窗口起始（mm:ss 或秒，空=不限）
-  aiDmEnd: '',             // 弹幕分析时间窗口结束
-  aiSubStart: '',          // 字幕总结时间窗口起始
-  aiSubEnd: '',            // 字幕总结时间窗口结束
-  ballMsgEnabled: true,    // 悬浮球入场提示（动效+文字）
-  ballMsgCustom: '',       // 悬浮球自定义提示文本（每行一条）
-  aiSaveJson: true,
-  aiTextOnly: true,
-  aiMaxItems: 0,
-  aiDanmakuPrompt: '你是B站弹幕分析助手。请分析以下弹幕（每行一条），用中文输出四部分：\n1. 弹幕情绪倾向（正面/负面/中立的大致占比）\n2. 热议话题（弹幕最关注的几个点）\n3. 名场面 / 高能时刻（被反复刷屏的梗或事件）\n4. 有趣弹幕精选（最多5条）\n\n弹幕内容：\n{text}',
-  aiDanmakuMaxItems: 500,
-  aiCommentPrompt: '你是B站评论区分析助手。请分析以下评论（每条格式：用户名: 评论），用中文输出五部分：\n1. 总体情感倾向（正面/负面/中立的估算占比）\n2. 核心观点（评论区的主要共识或态度）\n3. 热议话题（讨论最集中的几个话题）\n4. 亮点评论精选（最多5条，附用户名）\n5. 争议点 / 建议（如有）\n\n评论内容：\n{text}',
-  aiCommentMaxItems: 300,
-  cloudTopN: 30
-};
-
+// 默认设置统一在 utils.js（DEFAULTS），供安装补齐与设置页共用
 const $ = id => document.getElementById(id);
 
 // ---- Settings storage ----
@@ -223,7 +181,12 @@ async function importSettings() {
 
 // ---- Load settings ----
 async function load() {
-  const cfg = { ...DEFAULTS, ...(await getSettings()) };
+  const stored = await getSettings();
+  const cfg = { ...DEFAULTS, ...stored };
+  // 把缺失的默认项（含全部默认勾选项）补齐写入 storage，保证设置永远完整
+  if (Object.keys(DEFAULTS).some(k => !(k in stored))) {
+    try { await saveSettings(cfg); } catch (e) { }
+  }
   $('auto-cookie').checked = cfg.autoCookie;
   $('def-dm').checked = cfg.defaultDanmaku;
   $('def-cm').checked = cfg.defaultComments;

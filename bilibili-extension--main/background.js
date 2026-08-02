@@ -994,7 +994,19 @@ chrome.notifications.onClicked.addListener(() => {
 });
 
 // ============ Context Menu (right-click) ============
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
+  // 补齐完整默认设置（含全部默认勾选项）写入 local+sync，保留用户已有值；新增版本缺的键自动补默认
+  try {
+    for (const area of ['local', 'sync']) {
+      try {
+        const s = await chrome.storage[area].get('settings');
+        const stored = s.settings || {};
+        if (Object.keys(DEFAULTS).some(k => !(k in stored))) {
+          await chrome.storage[area].set({ settings: { ...DEFAULTS, ...stored } });
+        }
+      } catch (e) { }
+    }
+  } catch (e) { }
   chrome.contextMenus.removeAll();
   chrome.contextMenus.create({
     id: 'scrape-bilibili-dm',

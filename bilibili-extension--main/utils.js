@@ -248,17 +248,52 @@ function applyTheme(theme) {
   root.setProperty('--accent-grad', `linear-gradient(135deg, ${a}, ${b})`);
 }
 
-// ============ AI 字幕总结（OpenAI 兼容接口） ============
-const AI_DEFAULTS = {
+// ============ 默认设置（全量，所有上下文共用；安装/设置页打开时补齐写入 storage） ============
+const DEFAULTS = {
+  autoCookie: false,          // 自动从浏览器读取B站Cookie
+  defaultDanmaku: true,       // 弹幕
+  defaultComments: false,     // 评论
+  defaultSubtitle: false,     // 字幕
+  defaultReplies: false,      // 楼中楼
+  defaultFormat: 'json',      // 默认保存格式
+  defaultSubLan: 'ai-zh',     // 默认字幕语言
+  defaultMaxPages: 0,         // 评论目标页数，0=不限
+  commentMaxItems: 0,         // 评论条数上限（滑动窗口），0=不限
+  commentRateDelay: 400,      // 评论翻页间隔（毫秒），速率控制
+  subtitleTimeFormat: 'seconds',
+  devMode: false,
   aiBaseUrl: 'https://api.deepseek.com',
   aiModel: 'deepseek-chat',
   aiPrompt: '你是视频字幕分析助手。请用中文总结以下视频字幕，输出三部分：\n1. 主题概述（2-3句话）\n2. 核心要点（编号列表）\n3. 亮点金句（如有）\n\n字幕内容：\n{text}',
   aiDanmakuPrompt: '你是B站弹幕分析助手。请分析以下弹幕（每行一条），用中文输出四部分：\n1. 弹幕情绪倾向（正面/负面/中立的大致占比）\n2. 热议话题（弹幕最关注的几个点）\n3. 名场面 / 高能时刻（被反复刷屏的梗或事件）\n4. 有趣弹幕精选（最多5条）\n\n弹幕内容：\n{text}',
   aiCommentPrompt: '你是B站评论区分析助手。请分析以下评论（每条格式：用户名: 评论），用中文输出五部分：\n1. 总体情感倾向（正面/负面/中立的估算占比）\n2. 核心观点（评论区的主要共识或态度）\n3. 热议话题（讨论最集中的几个话题）\n4. 亮点评论精选（最多5条，附用户名）\n5. 争议点 / 建议（如有）\n\n评论内容：\n{text}',
-  aiThinking: true, // 展示思考模型(reasoning)的推理过程；deepseek-reasoner 等模型需关闭 temperature
-  aiCommentMaxItems: 300, // 去重后发送给 AI 的评论行数上限
-  aiMaxTokens: 4000, // 单次回复最大 token（思考+正文），默认 4000，避免长分析被截断
+  showBatch: true,            // 批量抓取区
+  showOptsRow: true,          // 抓取选项行
+  showAdvancedRow: true,      // 高级选项行
+  showCookie: true,           // Cookie 区
+  showFloatingBall: true,     // 悬浮球
+  theme: 'aurora',
+  soundEnabled: true,
+  aiStream: true,
+  aiThinking: true,           // 展示思考模型(reasoning)的推理过程；deepseek-reasoner 等模型需关闭 temperature
+  aiKeyPersist: false,        // 永久保存 API Key（明文存于 storage.local，需隐私确认）
+  aiMaxTokens: 4000,          // 单次回复最大 token（思考+正文），避免长分析被截断
+  aiDmStart: '',              // 弹幕分析时间窗口起始（mm:ss 或秒，空=不限）
+  aiDmEnd: '',
+  aiSubStart: '',             // 字幕总结时间窗口起始
+  aiSubEnd: '',
+  ballMsgEnabled: true,       // 悬浮球入场提示（动效+文字）
+  ballMsgCustom: '',          // 悬浮球自定义提示文本（每行一条）
+  aiSaveJson: true,
+  aiTextOnly: true,
+  aiMaxItems: 0,
+  aiDanmakuMaxItems: 500,     // 去重后发送给 AI 的弹幕行数上限
+  aiCommentMaxItems: 300,     // 去重后发送给 AI 的评论行数上限
+  cloudTopN: 30               // 弹幕热词数量
 };
+
+// 兼容旧引用（AI 相关默认子集）
+const AI_DEFAULTS = DEFAULTS;
 
 // ============ AI API Key（默认仅存 chrome.storage.session，浏览器会话级，不落盘不同步） ============
 // 用户可在设置页勾选"永久保存"后，Key 明文存入 chrome.storage.local（仅本机浏览器，不同步云端）
