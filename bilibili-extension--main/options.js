@@ -1,4 +1,15 @@
 // 默认设置统一在 utils.js（DEFAULTS），供安装补齐与设置页共用
+import {
+  DEFAULTS,
+  applyTheme,
+  ensureAiHostPermission,
+  fetchBalance,
+  fetchModelList,
+  getAiKey,
+  getBiliCookies,
+  setAiKey,
+} from './utils.js';
+
 const $ = id => document.getElementById(id);
 
 // ---- Settings storage ----
@@ -44,8 +55,6 @@ async function refreshCookieDisplay() {
 
 // ---- AI: 获取模型列表 ----
 let modelFetchTimer = null;
-let lastFetchedBase = '';
-let lastFetchedKey = '';
 
 function setAiStatus(text, cls = '') {
   const el = $('ai-status');
@@ -76,8 +85,6 @@ async function fetchModels(manual = false) {
     const current = $('ai-model').value.trim();
     if (!current || !models.includes(current)) $('ai-model').value = models[0];
     setAiStatus(`✅ 已获取 ${models.length} 个模型: ${models.join(', ')}`, 'ok');
-    lastFetchedBase = base;
-    lastFetchedKey = key;
   } catch (e) {
     setAiStatus(`❌ 获取失败: ${e.message}`, 'err');
   } finally {
@@ -170,7 +177,7 @@ async function importSettings() {
     }
     const cfg = { ...DEFAULTS, ...parsed };
     await saveSettings(cfg);
-    dirty = false;
+    clearDirty();
     setImportStatus(`✅ 已导入 ${Object.keys(parsed).length} 项设置`);
     $('import-box').value = '';
     await load();
@@ -188,6 +195,9 @@ async function load() {
     try { await saveSettings(cfg); } catch (e) { }
   }
   $('auto-cookie').checked = cfg.autoCookie;
+  const modeSwitch = $('ui-mode');
+  modeSwitch.checked = cfg.mode !== 'classic';
+  $('mode-label').textContent = modeSwitch.checked ? '预览版' : '经典版';
   $('def-dm').checked = cfg.defaultDanmaku;
   $('def-cm').checked = cfg.defaultComments;
   $('def-sub').checked = cfg.defaultSubtitle;
@@ -226,6 +236,9 @@ async function load() {
   $('ai-comment-prompt').value = cfg.aiCommentPrompt || DEFAULTS.aiCommentPrompt;
   $('ai-comment-max-items').value = cfg.aiCommentMaxItems || 300;
   $('cloud-top-n').value = cfg.cloudTopN || 30;
+  $('service-enabled').checked = !!cfg.serviceEnabled;
+  $('service-port').value = cfg.servicePort || 8765;
+  refreshMcpStatus();
   $('ball-msg-enabled').checked = cfg.ballMsgEnabled !== false;
   $('ball-msg-custom').value = cfg.ballMsgCustom || '';
   selectTheme(cfg.theme || 'aurora', true);
@@ -236,6 +249,9 @@ async function load() {
 // ---- Save settings ----
 async function save() {
   const settings = {
+    mode: $('ui-mode').checked ? 'preview' : 'classic',
+    serviceEnabled: $('service-enabled').checked,
+    servicePort: Math.min(65535, Math.max(1024, parseInt($('service-port').value) || 8765)),
     autoCookie: $('auto-cookie').checked,
     defaultDanmaku: $('def-dm').checked,
     defaultComments: $('def-cm').checked,
@@ -283,7 +299,7 @@ async function save() {
     if ($('ai-api-key').value.trim() && $('ai-base-url').value.trim()) {
       await ensureAiHostPermission($('ai-base-url').value.trim());
     }
-    dirty = false;
+    clearDirty();
     const msg = $('msg');
     msg.textContent = '✅ 已保存';
     msg.className = 'status-line ok';
@@ -297,7 +313,16 @@ async function save() {
 
 // ---- 未保存更改提示 ----
 let dirty = false;
-function markDirty() { dirty = true; }
+function markDirty() {
+  dirty = true;
+  const badge = $('dirty-badge');
+  if (badge) badge.classList.add('show');
+}
+function clearDirty() {
+  dirty = false;
+  const badge = $('dirty-badge');
+  if (badge) badge.classList.remove('show');
+}
 document.addEventListener('input', markDirty, true);
 document.addEventListener('change', markDirty, true);
 window.addEventListener('beforeunload', (e) => {
@@ -315,6 +340,59 @@ $('btn-balance').addEventListener('click', fetchBalanceNow);
 $('btn-sound-test').addEventListener('click', playTestSound);
 $('btn-export').addEventListener('click', exportSettings);
 $('btn-import').addEventListener('click', importSettings);
+
+// 界面模式开关：即时更新标签文案（保存时才会真正切换 popup）
+$('ui-mode').addEventListener('change', () => {
+  $('mode-label').textContent = $('ui-mode').checked ? '预览版' : '经典版';
+  markDirty();
+});
+
+// ============ MCP 服务状态（v2.3.0） ============
+function updateMcpCmd() {
+  const port = parseInt($('service-port').value) || 8765;
+  const cmd = `python mcp_server.py --port ${port}`;
+  $('service-cmd').textContent = cmd;
+  return { cmd, port };
+}
+updateMcpCmd();
+$('service-port').addEventListener('change', updateMcpCmd);
+
+function setMcpStatus(text, ok = null) {
+  $('service-status').textContent = text;
+  const dot = $('service-dot');
+  dot.style.background = ok === true ? '#34d399' : (ok === false ? '#f87171' : '#3a4266');
+  dot.style.boxShadow = ok === true ? '0 0 8px #34d399' : 'none';
+}
+
+async function refreshMcpStatus() {
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'mcpStatus' });
+    if (!res) { setMcpStatus('扩展后台不可用'); return; }
+    if (!res.enabled) {
+      setMcpStatus('MCP 服务未启用（保存设置后生效）');
+      return;
+    }
+    if (res.connected) {
+      setMcpStatus(`✅ 已连接本地桥接 ${res.url || ''}`, true);
+    } else {
+      setMcpStatus('⏳ 未连接：请确认已运行 python mcp_server.py --port <端口>（4 秒自动重连）', false);
+    }
+  } catch (e) {
+    setMcpStatus('状态查询失败');
+  }
+}
+setInterval(refreshMcpStatus, 2000);
+
+$('btn-copy-cmd').addEventListener('click', async (e) => {
+  const { cmd } = updateMcpCmd();
+  try {
+    await navigator.clipboard.writeText(cmd);
+    e.currentTarget.textContent = '✅ 已复制';
+    setTimeout(() => { e.currentTarget.textContent = '📋 复制启动命令'; }, 1500);
+  } catch (err) {
+    e.currentTarget.textContent = '❌ 复制失败';
+  }
+});
 
 // ---- API Key 永久保存：隐私声明确认弹窗（需等待 3 秒） ----
 let persistCountdown = null;
@@ -363,7 +441,14 @@ $('ai-base-url').addEventListener('change', () => {
   modelFetchTimer = setTimeout(() => fetchModels(), 300);
 });
 
-document.addEventListener('DOMContentLoaded', load);
+document.addEventListener('DOMContentLoaded', () => {
+  // 动态版本号（v2.1.0）
+  try {
+    const ver = chrome.runtime.getManifest().version;
+    if (ver) $('version-tag').textContent = ver;
+  } catch (e) { }
+  load();
+});
 
 // ---- 左侧标签页切换（记住上次所在页）----
 function switchTab(name) {

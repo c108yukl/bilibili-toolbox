@@ -1,9 +1,12 @@
+import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
+
 (() => {
   const $ = id => document.getElementById(id);
   const logBox = $('log');
   const btnStart = $('btn-start');
   const btnCancel = $('btn-cancel');
   const downloadArea = $('download-area');
+  const statusDot = $('status-dot');
 
   let port = null;
   let running = false;
@@ -66,6 +69,27 @@
     if (!dmOn) { $('chk-cloud').checked = false; $('chk-ai-dm').checked = false; }
     if (!subOn) $('chk-ai').checked = false;
     if (!cmOn) $('chk-ai-cm').checked = false;
+    syncTaskCards();
+  }
+
+  // ---- 任务卡 / 功能 chip 视觉状态同步（v2.1.0 新 UI） ----
+  function syncTaskCards() {
+    const cardMap = [
+      ['chk-danmaku', 'task-card-dm'],
+      ['chk-comments', 'task-card-cm'],
+      ['chk-subtitle', 'task-card-sub'],
+    ];
+    for (const [boxId, cardId] of cardMap) {
+      const card = $(cardId);
+      const box = $(boxId);
+      if (card && box) card.classList.toggle('on', box.checked);
+    }
+    for (const chipId of ['opt-cloud', 'opt-up', 'opt-ai', 'opt-ai-dm', 'opt-ai-cm']) {
+      const chip = $(chipId);
+      if (!chip) continue;
+      const input = chip.querySelector('input');
+      chip.classList.toggle('on', !!(input && input.checked));
+    }
   }
 
   // ---- 按设置控制主界面分区显隐 ----
@@ -89,11 +113,11 @@
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
       if (tab?.url) {
-        const m = tab.url.match(/BV[a-zA-Z0-9]+/);
+        const m = extractBVID(tab.url); // 与 utils.js 一致的精确 10 位 BV 匹配
         if (m) {
-          tabBvid = m[0];
-          $('bvid').value = m[0];
-          $('auto-detect-hint').textContent = `✅ 已自动识别: ${m[0]}`;
+          tabBvid = m;
+          $('bvid').value = m;
+          $('auto-detect-hint').textContent = `✅ 已自动识别: ${m}`;
         } else if (tab.url.includes('bilibili.com')) {
           $('auto-detect-hint').textContent = '📌 当前在B站但未检测到视频BV号';
         }
@@ -127,11 +151,18 @@
       if (cfg.defaultSubLan) $('sub-lan').value = cfg.defaultSubLan;
       syncOptionStates();
       applyVisibility(cfg);
+      syncTaskCards();
 
       // Auto-cookie
       if (cfg.autoCookie) {
         await fillCookieAuto();
       }
+    } catch (e) { }
+
+    // 动态版本号（v2.1.0）
+    try {
+      const ver = chrome.runtime.getManifest().version;
+      if (ver) $('version-tag').textContent = 'v' + ver;
     } catch (e) { }
   })();
 
@@ -166,6 +197,21 @@
     e.preventDefault();
     chrome.runtime.openOptionsPage();
   });
+
+  // v2.2.0：一键切换到预览版（background 监听 storage 变化自动切换 popup）
+  const btnPreview = $('btn-preview');
+  if (btnPreview) {
+    btnPreview.addEventListener('click', async () => {
+      try {
+        const s = await chrome.storage.local.get('settings');
+        const settings = s.settings || {};
+        settings.mode = 'preview';
+        await chrome.storage.local.set({ settings });
+        try { await chrome.storage.sync.set({ settings }); } catch (e) { }
+      } catch (e) { }
+      window.close();
+    });
+  }
 
   // Manual cookie read
   $('btn-read-cookie').addEventListener('click', async () => {
@@ -231,6 +277,8 @@
           if (msg.running && !running) {
             appendLog('⏳ 检测到后台任务正在运行...', 'log-progress');
             setRunning(true);
+          } else if (!msg.running && running) {
+            setRunning(false);
           }
           break;
       }
@@ -436,6 +484,7 @@
     btnStart.disabled = state;
     btnStart.textContent = state ? '⏳ 正在爬取...' : '🚀 开始爬取';
     btnCancel.style.display = state ? 'block' : 'none';
+    if (statusDot) statusDot.classList.toggle('running', state);
   }
 
   // ---- Parse batch list ----
@@ -529,6 +578,31 @@
   $('chk-danmaku').addEventListener('change', syncOptionStates);
   $('chk-subtitle').addEventListener('change', syncOptionStates);
   $('chk-comments').addEventListener('change', syncOptionStates);
+
+  // v2.1.0：任务卡整卡点击切换（开关区域由 label 原生处理，避免双重切换）
+  for (const id of ['task-card-dm', 'task-card-cm', 'task-card-sub']) {
+    const card = $(id);
+    if (!card) continue;
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.switch')) return;
+      const input = card.querySelector('input');
+      if (!input) return;
+      input.checked = !input.checked;
+      syncOptionStates();
+    });
+  }
+
+  // v2.1.0：功能 chip 勾选变化同步视觉状态
+  for (const id of ['chk-cloud', 'chk-up', 'chk-ai', 'chk-ai-dm', 'chk-ai-cm', 'chk-replies']) {
+    const el = $(id);
+    if (el) el.addEventListener('change', syncTaskCards);
+  }
+
+  // v2.1.0：清空日志 / 清空文件
+  const btnClearLog = $('btn-clear-log');
+  if (btnClearLog) btnClearLog.addEventListener('click', clearLog);
+  const btnClearDl = $('btn-clear-dl');
+  if (btnClearDl) btnClearDl.addEventListener('click', () => clearDownloads());
 
   // Enter key to start
   $('bvid').addEventListener('keydown', (e) => {

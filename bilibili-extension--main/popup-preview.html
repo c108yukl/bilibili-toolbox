@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>B站爬虫 · 预览版</title>
+  <link rel="stylesheet" href="styles/preview.css">
+</head>
+<body>
+  <!-- 庆祝彩带画布 -->
+  <canvas id="pv-confetti"></canvas>
+
+  <!-- 背景层：流动光晕 + 噪点 -->
+  <div class="pv-bg">
+    <div class="pv-blob pv-blob-1"></div>
+    <div class="pv-blob pv-blob-2"></div>
+    <div class="pv-blob pv-blob-3"></div>
+    <div class="pv-noise"></div>
+  </div>
+
+  <!-- 头部 -->
+  <header class="pv-header">
+    <div class="pv-logo">B</div>
+    <div class="pv-title-wrap">
+      <div class="pv-title">B站数据爬取 <small id="pv-version"></small></div>
+      <div class="pv-subtitle">预览版 · 玻璃拟态</div>
+    </div>
+    <span class="pv-dot" id="pv-dot" title="任务状态"></span>
+    <button class="pv-icon-btn" id="pv-btn-classic" title="切换到经典版">🎨</button>
+    <button class="pv-icon-btn" id="pv-btn-settings" title="设置">⚙️</button>
+  </header>
+
+  <div class="pv-inner">
+    <!-- 视频 -->
+    <section class="pv-glass pv-enter">
+      <div class="pv-section-title">视频</div>
+      <div class="pv-field">
+        <input type="text" id="pv-bvid" placeholder="BV 号或完整链接（B站视频页自动识别）" spellcheck="false" />
+        <button class="pv-btn" id="pv-btn-copy" title="复制当前BV号">📋 复制</button>
+      </div>
+      <div class="pv-hint" id="pv-hint-detect"></div>
+    </section>
+
+    <!-- 批量 -->
+    <details class="pv-glass pv-enter" id="pv-batch" style="padding:12px 14px">
+      <summary class="pv-log-summary" style="list-style:none">📚 批量模式：粘贴多个 BV 号 / 链接（每行一个）</summary>
+      <textarea id="pv-batch-list" placeholder="BV1xxxxxxxxxx&#10;https://www.bilibili.com/video/BV1yyyyyyyyyy&#10;..."
+                style="width:100%;min-height:64px;margin-top:8px;padding:9px 11px;background:rgba(0,0,0,.28);border:1px solid var(--pv-border);border-radius:10px;color:var(--pv-text);font-size:12px;outline:none;resize:vertical;font-family:'Consolas',monospace;line-height:1.5"></textarea>
+      <div class="pv-hint">填写后按列表顺序逐个抓取，可配合单 BV 输入合并</div>
+    </details>
+
+    <!-- 任务 -->
+    <section class="pv-glass pv-enter" style="padding:14px 14px 12px">
+      <div class="pv-section-title" style="margin-bottom:12px">任务
+        <span style="flex:1"></span>
+        <button class="pv-btn" id="pv-btn-select-all" style="padding:4px 10px;font-size:11px">🪄 全选</button>
+      </div>
+
+      <div class="pv-task-grid">
+        <div class="pv-task on" id="pv-task-dm" data-task="dm">
+          <span class="pv-task-icon">📺</span>
+          <div class="pv-task-name">弹幕</div>
+          <div class="pv-task-desc">seg.so 全量抓取</div>
+          <label class="pv-switch"><input type="checkbox" id="pv-chk-dm" checked><span class="pv-track"></span></label>
+        </div>
+        <div class="pv-task" id="pv-task-cm" data-task="cm">
+          <span class="pv-task-icon">💬</span>
+          <div class="pv-task-name">评论</div>
+          <div class="pv-task-desc">三级接口降级</div>
+          <label class="pv-switch"><input type="checkbox" id="pv-chk-cm"><span class="pv-track"></span></label>
+        </div>
+        <div class="pv-task" id="pv-task-sub" data-task="sub">
+          <span class="pv-task-icon">📄</span>
+          <div class="pv-task-name">字幕</div>
+          <div class="pv-task-desc">多语言可选</div>
+          <label class="pv-switch"><input type="checkbox" id="pv-chk-sub"><span class="pv-track"></span></label>
+        </div>
+      </div>
+
+      <!-- 功能 chip -->
+      <div class="pv-chips" style="margin-top:11px">
+        <label class="pv-chip" id="pv-chip-cloud"><input type="checkbox" id="pv-chk-cloud"><span class="pv-cdot"></span>☁️ 热词</label>
+        <label class="pv-chip" id="pv-chip-up"><input type="checkbox" id="pv-chk-up"><span class="pv-cdot"></span>👤 UP主</label>
+        <label class="pv-chip" id="pv-chip-ai"><input type="checkbox" id="pv-chk-ai"><span class="pv-cdot"></span>🤖 AI总结</label>
+        <label class="pv-chip" id="pv-chip-ai-dm"><input type="checkbox" id="pv-chk-ai-dm"><span class="pv-cdot"></span>🧠 AI弹幕</label>
+        <label class="pv-chip" id="pv-chip-ai-cm"><input type="checkbox" id="pv-chk-ai-cm"><span class="pv-cdot"></span>💬🧠 AI评论</label>
+        <label class="pv-chip" id="pv-chip-replies"><input type="checkbox" id="pv-chk-replies"><span class="pv-cdot"></span>↳ 楼中楼</label>
+      </div>
+
+      <!-- 高级参数 -->
+      <details class="pv-adv" id="pv-adv" style="margin-top:11px">
+        <summary><span class="pv-chev">▸</span> 高级参数（页数 / 滑动窗口 / 速率 / 语言 / 格式）</summary>
+        <div class="pv-adv-grid">
+          <div class="pv-adv-field">
+            <span>目标页数（0=全部）</span>
+            <input type="number" id="pv-max-pages" value="0" min="0">
+          </div>
+          <div class="pv-adv-field">
+            <span>评论条数上限（0=不限）</span>
+            <input type="number" id="pv-max-comments" value="0" min="0">
+          </div>
+          <div class="pv-adv-field">
+            <span>翻页间隔 ms（防风控）</span>
+            <input type="number" id="pv-rate-delay" value="400" min="100" step="50">
+          </div>
+          <div class="pv-adv-field">
+            <span>字幕语言</span>
+            <select id="pv-sub-lan">
+              <option value="ai-zh">中文AI</option>
+              <option value="zh-Hans">简体</option>
+              <option value="zh-Hant">繁体</option>
+              <option value="en">英语</option>
+              <option value="ja">日语</option>
+              <option value="ko">韩语</option>
+            </select>
+          </div>
+          <div class="pv-adv-field pv-adv-full">
+            <span>导出格式</span>
+            <select id="pv-save-fmt">
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+              <option value="txt">TXT</option>
+              <option value="srt">SRT</option>
+              <option value="ass">ASS</option>
+              <option value="lrc">LRC</option>
+            </select>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- Cookie -->
+    <section class="pv-glass pv-enter" id="pv-sec-cookie" style="padding:12px 14px">
+      <div class="pv-section-title">Cookie</div>
+      <div class="pv-field">
+        <input type="password" id="pv-cookie" placeholder="SESSDATA=xxx; bili_jct=yyy" spellcheck="false" />
+        <button class="pv-btn" id="pv-btn-cookie">🍪 读取</button>
+      </div>
+      <div class="pv-hint" id="pv-cookie-status"></div>
+    </section>
+
+    <!-- 操作 -->
+    <div class="pv-enter">
+      <button class="pv-go" id="pv-btn-start">🚀 开始爬取</button>
+      <button class="pv-cancel" id="pv-btn-cancel" style="display:none">⛔ 取消</button>
+    </div>
+
+    <!-- 进度 -->
+    <section class="pv-glass pv-progress" id="pv-progress" style="padding:12px 14px">
+      <div class="pv-progress-head">
+        <span class="pv-progress-label" id="pv-progress-label">准备中...</span>
+        <span class="pv-progress-pct" id="pv-progress-pct">0%</span>
+      </div>
+      <div class="pv-track"><div class="pv-fill" id="pv-fill"></div></div>
+    </section>
+
+    <!-- 结果面板 -->
+    <section class="pv-glass pv-panel" id="pv-panel-up" style="padding:12px 14px">
+      <div class="pv-panel-head">👤 UP 主信息 <span class="pv-tag">UP</span><span class="flex"></span></div>
+      <div class="pv-up" id="pv-up"></div>
+    </section>
+
+    <section class="pv-glass pv-panel" id="pv-panel-cloud" style="padding:12px 14px">
+      <div class="pv-panel-head">☁️ 弹幕热词 <span class="pv-tag">CLOUD</span><span class="flex"></span>
+        <button class="pv-btn" id="pv-btn-cloud-copy" style="padding:3px 9px;font-size:11px">📋 复制</button></div>
+      <div class="pv-cloud" id="pv-cloud"></div>
+    </section>
+
+    <section class="pv-glass pv-panel" id="pv-panel-summary" style="padding:12px 14px">
+      <div class="pv-panel-head">🤖 AI 字幕总结 <span class="pv-tag">AI</span><span class="flex"></span>
+        <button class="pv-btn" id="pv-btn-summary-copy" style="padding:3px 9px;font-size:11px">📋 复制</button></div>
+      <details class="pv-think" id="pv-summary-think" style="display:none"><summary>🤔 思考过程</summary><div class="pv-body pv-think-body" id="pv-summary-think-body"></div></details>
+      <div class="pv-body" id="pv-summary-body"></div>
+    </section>
+
+    <section class="pv-glass pv-panel" id="pv-panel-ai-dm" style="padding:12px 14px">
+      <div class="pv-panel-head">🧠 AI 弹幕分析 <span class="pv-tag">AI</span><span class="flex"></span>
+        <button class="pv-btn" id="pv-btn-ai-dm-copy" style="padding:3px 9px;font-size:11px">📋 复制</button></div>
+      <details class="pv-think" id="pv-ai-dm-think" style="display:none"><summary>🤔 思考过程</summary><div class="pv-body pv-think-body" id="pv-ai-dm-think-body"></div></details>
+      <div class="pv-body" id="pv-ai-dm-body"></div>
+    </section>
+
+    <section class="pv-glass pv-panel" id="pv-panel-ai-cm" style="padding:12px 14px">
+      <div class="pv-panel-head">💬🧠 AI 评论分析 <span class="pv-tag">AI</span><span class="flex"></span>
+        <button class="pv-btn" id="pv-btn-ai-cm-copy" style="padding:3px 9px;font-size:11px">📋 复制</button></div>
+      <details class="pv-think" id="pv-ai-cm-think" style="display:none"><summary>🤔 思考过程</summary><div class="pv-body pv-think-body" id="pv-ai-cm-think-body"></div></details>
+      <div class="pv-body" id="pv-ai-cm-body"></div>
+    </section>
+
+    <!-- 日志 -->
+    <details class="pv-glass pv-enter" id="pv-log-card" style="padding:12px 14px">
+      <summary class="pv-log-summary">📜 运行日志 <span class="flex"></span>
+        <button class="pv-btn" id="pv-btn-clear-log" style="padding:3px 9px;font-size:11px">🗑️ 清空</button></summary>
+      <div class="pv-log" id="pv-log"></div>
+    </details>
+
+    <!-- 文件 -->
+    <section class="pv-glass pv-enter" style="padding:12px 14px">
+      <div class="pv-dl-toolbar">
+        <span class="pv-hint" style="margin:0;flex:1">输出文件将保存到浏览器下载目录</span>
+        <button class="pv-btn" id="pv-btn-clear-dl" style="padding:3px 9px;font-size:11px">🗑️ 清空文件</button>
+      </div>
+      <div class="pv-dl" id="pv-dl"></div>
+    </section>
+  </div>
+
+  <!-- 完成 toast -->
+  <div class="pv-toast" id="pv-toast"></div>
+
+  <script type="module" src="popup-preview.js"></script>
+</body>
+</html>

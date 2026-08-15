@@ -1,5 +1,5 @@
 // ============ MD5 (public domain) ============
-const md5 = (function () {
+export const md5 = (function () {
   function md5cycle(x, k) {
     let a = x[0], b = x[1], c = x[2], d = x[3];
     a = ff(a, b, c, d, k[0], 7, -680876936);
@@ -76,17 +76,18 @@ const md5 = (function () {
   function add32(a, b) { return (a + b) & 0xFFFFFFFF; }
   function md5string(s) {
     const n = s.length;
-    const m = [];
-    for (let i = 0; i < 64; i++) m[i] = 0;
+    // 按实际块数分配：((n + 8) >> 6) + 1 块 × 16 词
+    // （此前固定 64 词，短消息被额外处理 3 个全零块，导致哈希全错、WBI 签名失效）
+    const total = (((n + 8) >> 6) + 1) * 16;
+    const m = new Array(total).fill(0);
     for (let i = 0; i < n; i++) m[i >> 2] |= s.charCodeAt(i) << ((i % 4) * 8);
     m[n >> 2] |= 0x80 << ((n % 4) * 8);
     m[(((n + 8) >> 6) << 4) + 14] = n * 8;
     const a = [1732584193, -271733879, -1732584194, 271733878];
     for (let i = 0; i < m.length; i += 16) {
-      const b = a.slice();
-      md5cycle(b, m.slice(i, i + 16));
-      a[0] = add32(a[0], b[0]); a[1] = add32(a[1], b[1]);
-      a[2] = add32(a[2], b[2]); a[3] = add32(a[3], b[3]);
+      // md5cycle 内部已将结果累加回状态（x[i] += 压缩值），
+      // 此处直接原地迭代即可；此前又做了一次 add32 导致双重累加、哈希全错
+      md5cycle(a, m.slice(i, i + 16));
     }
     const hex = "0123456789abcdef";
     let out = "";
@@ -106,7 +107,7 @@ let wbiKeysCache = null;
 let serverTimeOffset = 0; // 服务器时间 - 本地时间（毫秒）
 
 // 获取服务器时间偏移（用于 wts 校准）
-async function syncServerTime() {
+export async function syncServerTime() {
   try {
     const before = Date.now();
     const resp = await fetch('https://api.bilibili.com/x/report/web/heartbeat', {
@@ -123,9 +124,9 @@ async function syncServerTime() {
   } catch (e) { /* 校准失败则使用本地时间 */ }
 }
 
-function nowServer() { return Date.now() + serverTimeOffset; }
+export function nowServer() { return Date.now() + serverTimeOffset; }
 
-async function getWbiKeys() {
+export async function getWbiKeys() {
   if (wbiKeysCache && nowServer() - wbiKeysCache.time < 3600000) return wbiKeysCache;
   const resp = await fetch('https://api.bilibili.com/x/web-interface/nav', {
     headers: {
@@ -137,32 +138,38 @@ async function getWbiKeys() {
   });
   const data = await resp.json();
   if (data.code !== 0) throw new Error('获取WBI密钥失败: ' + (data.message || ''));
-  const img = data.data.wbi_img.img_url.split('/').pop().split('.')[0];
-  const sub = data.data.wbi_img.sub_url.split('/').pop().split('.')[0];
+  const wbi = data?.data?.wbi_img;
+  if (!wbi || !wbi.img_url || !wbi.sub_url) {
+    throw new Error('获取WBI密钥失败: 响应缺少 wbi_img（B站接口变更或需要登录）');
+  }
+  const img = wbi.img_url.split('/').pop().split('.')[0];
+  const sub = wbi.sub_url.split('/').pop().split('.')[0];
   wbiKeysCache = { img, sub, time: nowServer() };
   return wbiKeysCache;
 }
 
-// WBI 64-element shuffle table (from bilibili-api-python)
+// WBI 64-element shuffle table（与 bilibili-api-python v17 官方一致；
+// 旧表为 2023 年前的版本，B站已更换，沿用旧表会导致 WBI 签名被风控拒绝）
 const MIXIN_TABLE = [
   46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
-  27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 37, 12, 46, 61, 7,
-  20, 55, 17, 60, 11, 36, 39, 56, 22, 1, 62, 13, 30, 16, 44, 24,
-  34, 51, 41, 4, 52, 25, 57, 40, 23, 21, 62, 34, 0, 38, 54, 6
+  27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+  37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+  22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52
 ];
 
-function getMixKey(img, sub) {
+export function getMixKey(img, sub) {
   const raw = img + sub;
   let mix = '';
-  for (let i = 0; i < 32; i++) mix += raw[MIXIN_TABLE[i]];
+  for (let i = 0; i < 32; i++) mix += raw[MIXIN_TABLE[i]] || '';
   return mix;
 }
 
-function encryptWbi(params, mixKey) {
+export function encryptWbi(params, mixKey) {
   const wts = Math.floor(nowServer() / 1000);
   const all = { ...params, wts };
   const keys = Object.keys(all).sort();
-  const str = keys.map(k => `${k}=${all[k]}`).join('&') + mixKey;
+  // 与官方实现一致：urlencode 排序后的键值对再拼接 mixKey 取 md5
+  const str = keys.map(k => `${encodeURIComponent(k)}=${encodeURIComponent(all[k])}`).join('&') + mixKey;
   const w_rid = md5(str);
   return { ...all, w_rid };
 }
@@ -170,7 +177,7 @@ function encryptWbi(params, mixKey) {
 // ============ BV ID Extraction ============
 const BV_RE = /BV[a-zA-Z0-9]{10}/;
 
-function extractBVID(raw) {
+export function extractBVID(raw) {
   if (!raw) return null;
   raw = String(raw).trim().replace(/\/+$/, '');
   const m = raw.match(BV_RE);
@@ -180,7 +187,7 @@ function extractBVID(raw) {
 // ============ Cookies ============
 // 读取 B站 Cookie。优先按 domain 过滤，兜底全量抓取后筛选
 // （不同 Chromium 版本对带前导点号的 domain 匹配行为不一致）
-async function getBiliCookies() {
+export async function getBiliCookies() {
   try {
     const cookies = await chrome.cookies.getAll({ domain: 'bilibili.com' });
     if (cookies.length > 0) return cookies;
@@ -194,7 +201,7 @@ async function getBiliCookies() {
 
 // ============ 弹幕热词 ============
 // 高频停用词（常见口语/虚词）
-const CLOUD_STOP_WORDS = new Set([
+export const CLOUD_STOP_WORDS = new Set([
   '我们', '你们', '他们', '她们', '这个', '那个', '什么', '怎么', '自己', '可以', '一个',
   '真的', '还是', '没有', '不是', '就是', '现在', '时候', '知道', '已经', '这样', '那样',
   '所以', '但是', '然后', '因为', '如果', '虽然', '而且', '或者', '于是', '不过', '还有',
@@ -203,7 +210,7 @@ const CLOUD_STOP_WORDS = new Set([
 ]);
 
 // 提取文本 token：拉丁词(≥2位) + 中文二元组
-function extractTokens(text) {
+export function extractTokens(text) {
   const tokens = [];
   const norm = String(text || '').normalize('NFKC').toLowerCase();
   for (const m of norm.matchAll(/[a-z0-9]{2,}/g)) tokens.push(m[0]);
@@ -215,7 +222,7 @@ function extractTokens(text) {
 }
 
 // 弹幕 → 热词频率 [{word, count}]，按频率降序
-function danmakuWordCloud(dms, topN = 30) {
+export function danmakuWordCloud(dms, topN = 30) {
   const freq = new Map();
   for (const d of dms || []) {
     for (const t of extractTokens(d.text || '')) {
@@ -231,7 +238,7 @@ function danmakuWordCloud(dms, topN = 30) {
 }
 
 // ============ 主题色 ============
-const THEMES = {
+export const THEMES = {
   aurora: ['#00c8ff', '#7c5cff'],
   ocean: ['#38bdf8', '#2563eb'],
   forest: ['#4ade80', '#0d9488'],
@@ -240,7 +247,7 @@ const THEMES = {
 };
 
 // 应用主题色到当前页面（popup / options / content 共用）
-function applyTheme(theme) {
+export function applyTheme(theme) {
   const [a, b] = THEMES[theme] || THEMES.aurora;
   const root = document.documentElement.style;
   root.setProperty('--accent', a);
@@ -249,7 +256,10 @@ function applyTheme(theme) {
 }
 
 // ============ 默认设置（全量，所有上下文共用；安装/设置页打开时补齐写入 storage） ============
-const DEFAULTS = {
+export const DEFAULTS = {
+  mode: 'preview',            // UI 模式：preview=预览版（玻璃拟态）/ classic=经典版
+  serviceEnabled: false,      // MCP 服务开关：允许 AI 客户端经本地桥接调用扩展
+  servicePort: 8765,          // MCP 本地桥接端口（需与 python mcp_server.py --port 一致）
   autoCookie: false,          // 自动从浏览器读取B站Cookie
   defaultDanmaku: true,       // 弹幕
   defaultComments: false,     // 评论
@@ -293,14 +303,14 @@ const DEFAULTS = {
 };
 
 // 兼容旧引用（AI 相关默认子集）
-const AI_DEFAULTS = DEFAULTS;
+export const AI_DEFAULTS = DEFAULTS;
 
 // ============ AI API Key（默认仅存 chrome.storage.session，浏览器会话级，不落盘不同步） ============
 // 用户可在设置页勾选"永久保存"后，Key 明文存入 chrome.storage.local（仅本机浏览器，不同步云端）
-const AI_KEY_PERSIST_KEY = 'aiApiKeyPersist';
+export const AI_KEY_PERSIST_KEY = 'aiApiKeyPersist';
 
 // 用户是否已选择"永久保存 API Key"（设置项 aiKeyPersist）
-async function getAiKeyPersistFlag() {
+export async function getAiKeyPersistFlag() {
   try {
     const s = await chrome.storage.local.get('settings');
     if (s.settings && s.settings.aiKeyPersist) return true;
@@ -308,7 +318,7 @@ async function getAiKeyPersistFlag() {
   return false;
 }
 
-async function getAiKey() {
+export async function getAiKey() {
   try {
     const s = await chrome.storage.session.get('aiApiKey');
     if (s.aiApiKey) return s.aiApiKey;
@@ -339,7 +349,7 @@ async function getAiKey() {
   return '';
 }
 
-async function setAiKey(key) {
+export async function setAiKey(key) {
   try { await chrome.storage.session.set({ aiApiKey: key || '' }); } catch (e) { }
   // 仅当用户勾选"永久保存"时才明文落盘到 storage.local；取消勾选则删除本地副本
   try {
@@ -353,7 +363,7 @@ async function setAiKey(key) {
 
 // 确保对自定义 AI 服务地址有宿主权限（optional_host_permissions）。
 // 需在用户手势下调用（设置页保存/点击）；后台无手势时抛明确错误提示
-async function ensureAiHostPermission(baseUrl) {
+export async function ensureAiHostPermission(baseUrl) {
   let origin = null;
   try { origin = new URL(String(baseUrl || '')).origin + '/*'; } catch (e) { return; }
   try {
@@ -366,7 +376,7 @@ async function ensureAiHostPermission(baseUrl) {
 }
 
 // AI 调用统一入口：取 Key + 校验地址权限
-async function resolveAiCfg(cfg) {
+export async function resolveAiCfg(cfg) {
   const merged = { ...AI_DEFAULTS, ...(cfg || {}) };
   const key = await getAiKey();
   if (!key) throw new Error('未配置 AI API Key（设置 → AI 总结，默认仅保存在本浏览器会话）');
@@ -376,7 +386,7 @@ async function resolveAiCfg(cfg) {
 
 // 构建发送给 AI 的字幕文本（按设置省 token）
 // aiTextOnly: 仅文本（默认） / 否则带时间戳；aiMaxItems: 条数上限(0=全部)
-function buildAIText(subs, cfg = {}) {
+export function buildAIText(subs, cfg = {}) {
   let items = subs || [];
   if (cfg.aiMaxItems > 0) items = items.slice(0, cfg.aiMaxItems);
   const text = items
@@ -386,13 +396,13 @@ function buildAIText(subs, cfg = {}) {
 }
 
 // 把字幕片段拼成文本供 AI 使用
-function subtitlesToText(subs) {
+export function subtitlesToText(subs) {
   return (subs || []).map(s => `[${fmtFullTime(s.from)}] ${s.content}`).join('\n');
 }
 
 // ============ AI 分析时间窗口 ============
 // 解析时间窗口输入（支持 "mm:ss" / "1:30:05" / 纯秒数 / 空=不限）→ 秒数；非法输入返回 null
-function parseTimeWindow(str) {
+export function parseTimeWindow(str) {
   const s = String(str || '').trim();
   if (!s) return null;
   if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
@@ -404,7 +414,7 @@ function parseTimeWindow(str) {
 }
 
 // 按时间窗口过滤：仅保留 getTime(item) 落在 [start, end] 内的条目；空值表示不限
-function filterByWindow(items, getTime, startStr, endStr) {
+export function filterByWindow(items, getTime, startStr, endStr) {
   const start = parseTimeWindow(startStr);
   const end = parseTimeWindow(endStr);
   if (start == null && end == null) return items;
@@ -417,7 +427,7 @@ function filterByWindow(items, getTime, startStr, endStr) {
 }
 
 // 非流式 AI 调用（aiStream=false 时使用；返回完整正文 + 思考过程）
-async function aiComplete(text, prompt, aiCfg) {
+export async function aiComplete(text, prompt, aiCfg) {
   const { cfg, key } = await resolveAiCfg(aiCfg);
   const content = String(prompt || '').replace(/\{text\}/g, text || '');
   const base = cfg.aiBaseUrl.replace(/\/+$/, '');
@@ -448,7 +458,7 @@ async function aiComplete(text, prompt, aiCfg) {
 }
 
 // 构建发送给 AI 的弹幕文本（去重 + 条数上限）
-function buildDanmakuText(dms, maxItems = 500) {
+export function buildDanmakuText(dms, maxItems = 500) {
   const seen = new Set();
   const out = [];
   for (const d of dms || []) {
@@ -464,7 +474,7 @@ function buildDanmakuText(dms, maxItems = 500) {
 // 流式 AI 调用：text 为已构建文本，prompt 支持 {text} 占位符
 // onChunk(chunk, fullText) 实时回调正文；onReasoning(rChunk, fullReasoning) 实时回调思考过程
 // signal 用于取消；思考模型（如 deepseek-reasoner）会先输出 reasoning_content 再输出正文
-async function aiStream(text, prompt, aiCfg, onChunk, signal, onReasoning) {
+export async function aiStream(text, prompt, aiCfg, onChunk, signal, onReasoning) {
   const { cfg, key } = await resolveAiCfg(aiCfg);
   const content = String(prompt || '').replace(/\{text\}/g, text || '');
   const base = cfg.aiBaseUrl.replace(/\/+$/, '');
@@ -530,7 +540,7 @@ async function aiStream(text, prompt, aiCfg, onChunk, signal, onReasoning) {
 
 // ============ 评论 → AI 文本 ============
 // 组装评论数据为 AI 可读文本：去重 + 条数上限 + 每评论附带最多 3 条回复
-function buildCommentText(items, maxItems = 300) {
+export function buildCommentText(items, maxItems = 300) {
   const seen = new Set();
   const lines = [];
   for (const item of items || []) {
@@ -553,7 +563,7 @@ function buildCommentText(items, maxItems = 300) {
 }
 
 // 获取模型列表（OpenAI 兼容：GET {base}/models）→ 模型 id 数组
-async function fetchModelList(baseUrl, apiKey) {
+export async function fetchModelList(baseUrl, apiKey) {
   if (!apiKey) throw new Error('请先填写 API Key');
   await ensureAiHostPermission(baseUrl);
   const base = (baseUrl || AI_DEFAULTS.aiBaseUrl).replace(/\/+$/, '');
@@ -567,7 +577,7 @@ async function fetchModelList(baseUrl, apiKey) {
 }
 
 // 查询余额（DeepSeek 等平台支持）
-async function fetchBalance(baseUrl, apiKey) {
+export async function fetchBalance(baseUrl, apiKey) {
   if (!apiKey) throw new Error('请先填写 API Key');
   await ensureAiHostPermission(baseUrl);
   const base = (baseUrl || AI_DEFAULTS.aiBaseUrl).replace(/\/+$/, '');
@@ -587,13 +597,13 @@ async function fetchBalance(baseUrl, apiKey) {
 }
 
 // ============ Time Formatting ============
-function fmtTime(ts) {
+export function fmtTime(ts) {
   const d = new Date(ts * 1000);
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function fmtSRTTime(sec) {
+export function fmtSRTTime(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
@@ -602,13 +612,13 @@ function fmtSRTTime(sec) {
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)},${pad(ms, 3)}`;
 }
 
-function fmtLRCTime(sec) {
+export function fmtLRCTime(sec) {
   const m = Math.floor(sec / 60);
   const s = (sec % 60).toFixed(2).padStart(5, '0');
   return `${String(m).padStart(2, '0')}:${s}`;
 }
 
-function fmtASSTime(sec) {
+export function fmtASSTime(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = (sec % 60).toFixed(2).padStart(5, '0');
@@ -616,7 +626,7 @@ function fmtASSTime(sec) {
 }
 
 // ============ Danmaku XML Parser ============
-function parseDanmakuXML(xmlText) {
+export function parseDanmakuXML(xmlText) {
   const dms = [];
   const re = /<d p="([^"]+)"[^>]*>([\s\S]*?)<\/d>/g;
   let match;
@@ -637,7 +647,7 @@ function parseDanmakuXML(xmlText) {
 
 // ============ Danmaku Proto Parser (seg.so) ============
 // B站 x/v2/dm/web/seg.so 返回 protobuf(DmSegMobileReply)，登录态下弹幕远比 dm/list.so 全
-function parseDanmakuProto(buf) {
+export function parseDanmakuProto(buf) {
   const dms = [];
   const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   let pos = 0;
@@ -692,11 +702,11 @@ function parseDanmakuProto(buf) {
 
 // ============ File Generators ============
 
-function genJSON(data) {
+export function genJSON(data) {
   return JSON.stringify(data, null, 2);
 }
 
-function genCSV(rows, fields) {
+export function genCSV(rows, fields) {
   const esc = v => {
     const s = String(v ?? '');
     return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -706,22 +716,22 @@ function genCSV(rows, fields) {
   return '\uFEFF' + header + '\n' + body.join('\n');
 }
 
-function genTXT(lines) {
+export function genTXT(lines) {
   return lines.join('\n');
 }
 
 // SRT 内容转义：去除多余换行，转义 --> 避免破坏时间轴格式
-function sanitizeSubText(text) {
+export function sanitizeSubText(text) {
   return String(text ?? '').replace(/\r?\n/g, ' ').replace(/-->/g, '→');
 }
 
-function genSRT(subtitles) {
+export function genSRT(subtitles) {
   return subtitles.map((s, i) => {
     return `${i + 1}\n${fmtSRTTime(s.from)} --> ${fmtSRTTime(s.to)}\n${sanitizeSubText(s.content)}\n`;
   }).join('\n');
 }
 
-function genASS(subtitles, title = 'Bilibili Subtitle') {
+export function genASS(subtitles, title = 'Bilibili Subtitle') {
   const header = `[Script Info]
 Title: ${title}
 ScriptType: v4.00+
@@ -742,12 +752,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   return header + events;
 }
 
-function genLRC(subtitles) {
+export function genLRC(subtitles) {
   return subtitles.map(s => `[${fmtLRCTime(s.from)}]${sanitizeSubText(s.content)}`).join('\n');
 }
 
 // ============ Subtitle Time Format ============
-function fmtFullTime(sec) {
+export function fmtFullTime(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
@@ -757,7 +767,7 @@ function fmtFullTime(sec) {
 }
 
 // ============ Danmaku Formatter ============
-function formatDanmakuFlat(dms) {
+export function formatDanmakuFlat(dms) {
   return dms.map(d => ({
     time_s: Math.round(d.dm_time * 10) / 10,
     text: d.text,
@@ -768,7 +778,7 @@ function formatDanmakuFlat(dms) {
   }));
 }
 
-function formatComment(c, replies = []) {
+export function formatComment(c, replies = []) {
   return {
     like: c.like || 0,
     uname: c.member?.uname || '',

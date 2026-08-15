@@ -91,6 +91,7 @@
 
   // ---- 悬浮球提示气泡（一次性展示，不轮播）----
   function showBubble(text) {
+    if (!ball) return; // 悬浮球已被移除/未创建时不展示
     if (!bubble) {
       bubble = document.createElement('div');
       bubble.className = '__bili_bubble';
