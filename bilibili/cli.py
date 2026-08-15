@@ -75,7 +75,7 @@ def _comment_fmt(save_fmt) -> str | None:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="B站 弹幕+评论(+回复)+字幕 爬取工具（v2: WBI签名/seg.so全量/三级降级）",
+        description="B站 弹幕+评论(+回复)+字幕 爬取工具（WBI签名/seg.so全量/三级降级）",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""示例:
   python cli.py BV1cmofByENF -dc --all --replies --save json

@@ -72,7 +72,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     syncTaskCards();
   }
 
-  // ---- 任务卡 / 功能 chip 视觉状态同步（v2.1.0 新 UI） ----
+  // ---- 任务卡 / 功能 chip 视觉状态同步（1.2.0 新 UI） ----
   function syncTaskCards() {
     const cardMap = [
       ['chk-danmaku', 'task-card-dm'],
@@ -159,7 +159,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
       }
     } catch (e) { }
 
-    // 动态版本号（v2.1.0）
+    // 动态版本号（1.2.0）
     try {
       const ver = chrome.runtime.getManifest().version;
       if (ver) $('version-tag').textContent = 'v' + ver;
@@ -198,7 +198,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     chrome.runtime.openOptionsPage();
   });
 
-  // v2.2.0：一键切换到预览版（background 监听 storage 变化自动切换 popup）
+  // 一键切换到预览版（background 监听 storage 变化自动切换 popup）
   const btnPreview = $('btn-preview');
   if (btnPreview) {
     btnPreview.addEventListener('click', async () => {
@@ -579,7 +579,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   $('chk-subtitle').addEventListener('change', syncOptionStates);
   $('chk-comments').addEventListener('change', syncOptionStates);
 
-  // v2.1.0：任务卡整卡点击切换（开关区域由 label 原生处理，避免双重切换）
+  // 任务卡整卡点击切换（开关区域由 label 原生处理，避免双重切换）
   for (const id of ['task-card-dm', 'task-card-cm', 'task-card-sub']) {
     const card = $(id);
     if (!card) continue;
@@ -592,13 +592,13 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     });
   }
 
-  // v2.1.0：功能 chip 勾选变化同步视觉状态
+  // 功能 chip 勾选变化同步视觉状态
   for (const id of ['chk-cloud', 'chk-up', 'chk-ai', 'chk-ai-dm', 'chk-ai-cm', 'chk-replies']) {
     const el = $(id);
     if (el) el.addEventListener('change', syncTaskCards);
   }
 
-  // v2.1.0：清空日志 / 清空文件
+  // 清空日志 / 清空文件
   const btnClearLog = $('btn-clear-log');
   if (btnClearLog) btnClearLog.addEventListener('click', clearLog);
   const btnClearDl = $('btn-clear-dl');

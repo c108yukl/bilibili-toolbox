@@ -347,7 +347,7 @@ $('ui-mode').addEventListener('change', () => {
   markDirty();
 });
 
-// ============ MCP 服务状态（v2.3.0） ============
+// ============ MCP 服务状态（1.2.0） ============
 function updateMcpCmd() {
   const port = parseInt($('service-port').value) || 8765;
   const cmd = `python mcp_server.py --port ${port}`;
@@ -442,7 +442,7 @@ $('ai-base-url').addEventListener('change', () => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 动态版本号（v2.1.0）
+  // 动态版本号（1.2.0）
   try {
     const ver = chrome.runtime.getManifest().version;
     if (ver) $('version-tag').textContent = ver;

@@ -1,5 +1,5 @@
 """
-B站 弹幕/评论/字幕 抓取工具包 v2（自研 HTTP 栈，零 bilibili-api 依赖）
+B站 弹幕/评论/字幕 抓取工具包（自研 HTTP 栈，零 bilibili-api 依赖）
 
 快速上手:
     from bilibili import get_danmaku, get_subtitle, get_comments, parse_cookie
@@ -11,7 +11,7 @@ B站 弹幕/评论/字幕 抓取工具包 v2（自研 HTTP 栈，零 bilibili-ap
 
     asyncio.run(main())
 
-v2 新特性:
+1.2 新特性:
 - WBI 签名 + 服务器时间校准（wts）
 - 弹幕 seg.so 分段全量抓取（登录态），与 list.so 对比取更全的一份
 - 评论 cursor 主流接口 → WBI → page 备用接口自动降级，置顶合并去重
@@ -30,7 +30,7 @@ from bilibili.subtitle import get_subtitle
 from bilibili.models import CookieCredential, Danmaku, Subtitle, SubtitleLine
 from bilibili.client import BiliClient, BiliError, BiliAPIError, BiliHTTPError, BiliNetworkError
 
-__version__ = "2.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "parse_cookie",

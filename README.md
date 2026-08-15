@@ -3,7 +3,7 @@
 一键抓取 B站 视频的**弹幕、评论（含楼中楼）、字幕**，提供三种使用方式：Python SDK、命令行 CLI、Streamlit 网页版，另有 Edge/Chrome 浏览器扩展（主包）。
 
 ```
-├── bilibili/            # Python SDK（可 pip install，自研 HTTP 栈，v2.0.0）
+├── bilibili/            # Python SDK（可 pip install，自研 HTTP 栈，v1.2.0）
 │   ├── client.py        #   异步请求客户端（超时/重试/Cookie/错误归一）
 │   ├── wbi.py           #   WBI 签名 + 服务器时间校准
 │   ├── proto.py         #   seg.so protobuf 弹幕解析（零依赖）
@@ -16,13 +16,13 @@
 │   └── webapp.py        #   Streamlit 实现（包内）
 ├── cli.py               # 命令行入口（薄壳，兼容 python cli.py）
 ├── app.py               # Streamlit 网页版入口（薄壳，streamlit run app.py）
-├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v2.3.0, ES Module，双 UI 模式 + MCP 服务)
+├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.2.0, ES Module，双 UI 模式 + MCP 服务)
 ├── mcp_server.py              # MCP 本地桥接服务（自定义端口，AI 调用扩展 + 自动 Cookie）
 ├── tests/               # pytest 测试（139 个，全部离线可跑）
 └── bak/                 # 旧版本备份（保留，已忽略）
 ```
 
-> v2.0.0 重构：移除 `bilibili-api-python` 依赖，改为自研异步 HTTP 栈，
+> 全面重构：移除 `bilibili-api-python` 依赖，改为自研异步 HTTP 栈，
 > 并把扩展侧已验证的强能力全部移植进 Python SDK（WBI 签名、服务器时间校准、
 > seg.so 全量弹幕、评论三级降级、字幕三级降级、滑动窗口、热词与 AI 分析）。
 
@@ -84,7 +84,7 @@ result = await summarize_subtitle(subs, cfg=AIConfig(api_key="sk-xxx"))
 print(result["content"])                        # 流式：on_chunk 回调
 ```
 
-### 方式 4：Edge/Chrome 浏览器扩展（主包，v2.3.0）
+### 方式 4：Edge/Chrome 浏览器扩展（主包，v1.2.0）
 
 1. 打开 `edge://extensions/`（Chrome 为 `chrome://extensions/`）→ 开启"开发人员模式"
 2. 点"加载解压缩的扩展"→ 选择 `bilibili-extension--main/` 目录

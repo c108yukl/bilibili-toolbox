@@ -1,6 +1,6 @@
 /* ============================================================
    B站爬虫扩展 - 预览版弹窗逻辑（popup-preview）
-   v2.2.0-preview
+   v1.2.0-preview
    与经典版共用：utils.js 工具库 + background 消息协议（port 'scraper'）
    视觉：玻璃拟态 + 弹性微交互 + 完成彩带庆祝
    ============================================================ */
@@ -186,7 +186,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   }
   function clearLog() { $('pv-log').innerHTML = ''; }
 
-  // ── 进度（v2.3.0：rAF 插值平滑过渡，丝滑不跳变） ──
+  // ── 进度（rAF 插值平滑过渡，丝滑不跳变） ──
   let animPct = 0;
   let animRaf = null;
   function setProgress(percent) {
@@ -579,7 +579,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     if (e.key === 'Enter' && !running) startTask();
   });
 
-  // v2.3.0：点击涟漪
+  // 点击涟漪
   for (const id of ['pv-btn-start', 'pv-btn-copy', 'pv-btn-cookie', 'pv-btn-select-all',
                     'pv-btn-settings', 'pv-btn-classic', 'pv-btn-clear-log', 'pv-btn-clear-dl']) {
     const el = $(id);

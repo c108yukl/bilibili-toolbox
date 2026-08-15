@@ -62,7 +62,7 @@ function notifyFloat(ok, message) {
 let devMode = false;
 function devLog(...args) { if (devMode) console.log('[dev]', ...args); }
 
-// ============ UI 模式切换（v2.2.0：preview 预览版 / classic 经典版） ============
+// ============ UI 模式切换（preview 预览版 / classic 经典版） ============
 // action.default_popup 是静态的，用 chrome.action.setPopup 按设置动态切换
 async function applyPopupMode() {
   try {
@@ -84,7 +84,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // 浏览器启动 / 扩展加载时同步一次（保证 popup 与设置一致）
 applyPopupMode();
 
-// ============ MCP 服务桥接（v2.3.0） ============
+// ============ MCP 服务桥接（1.2.0） ============
 // 架构：AI 客户端(MCP) → 本地 mcp_server.py(HTTP/SSE, 自定义端口) → WebSocket → 本扩展执行
 // 工具调用自动携带浏览器 Cookie（chrome.cookies 实时读取，无需手动提供）
 let mcpWs = null;
@@ -112,7 +112,7 @@ async function mcpConnect() {
     ws.onopen = () => {
       mcpConnected = true;
       mcpSession = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
-      mcpSend({ type: 'hello', session: mcpSession, version: '2.3.0' });
+      mcpSend({ type: 'hello', session: mcpSession, version: '1.2.0' });
       devLog('[MCP] 已连接本地服务 ws://127.0.0.1:' + port + '/ws');
     };
     ws.onmessage = async (ev) => {
@@ -230,7 +230,7 @@ function info(msg) { send('info', { message: msg }); }
 function success(msg) { send('success', { message: msg }); }
 function error(msg) { send('error', { message: msg }); }
 
-// ============ 阶段进度模型（v2.3.0） ============
+// ============ 阶段进度模型（1.2.0） ============
 // 单视频任务按阶段估算百分比：视频3% → 弹幕8-26% → 字幕28-38% → 评论40-92% → AI 93-99%
 // 批量任务按 (i/total) 区间缩放；评论阶段按 known_total（或页数）估算
 let lastPercent = 0;
@@ -697,7 +697,7 @@ async function handleComments(bvid, aid, params, onStage) {
         if (maxComments > 0 && allItems.length >= maxComments) break;
       }
       const topTag = topReplies.length ? ` / ${topReplies.length} 置顶` : '';
-      // 进度估算（v2.3.0）：已知总数按已获取比例；未知按页数线性估算（评论阶段映射 40→92）
+      // 进度估算（1.2.0）：已知总数按已获取比例；未知按页数线性估算（评论阶段映射 40→92）
       let innerPct;
       if (knownTotal > 0) {
         innerPct = Math.min(90, 40 + 50 * Math.min(1, allItems.length / knownTotal));

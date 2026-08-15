@@ -1,6 +1,6 @@
 /* ============================================================
    B站爬虫扩展 - 预览版模式样式（popup-preview 专用，自包含）
-   v2.2.0-preview
+   v1.2.0-preview
    设计语言：深空玻璃拟态 + 流动光晕 + 弹性微交互
    性能原则：动画只用 transform / opacity / filter（GPU 合成），
    玻璃效果用 backdrop-filter（弹窗尺寸小，开销可控）
@@ -218,7 +218,7 @@ body {
 .pv-btn:active { transform: scale(.96); }
 .pv-hint { font-size: 10.5px; color: var(--pv-dim2); margin-top: 7px; line-height: 1.5; }
 
-/* 点击涟漪（v2.3.0 丝滑增量） */
+/* 点击涟漪（丝滑增量） */
 .pv-btn, .pv-go, .pv-icon-btn, .pv-file { position: relative; overflow: hidden; }
 .pv-ripple {
   position: absolute; border-radius: 50%; pointer-events: none;
