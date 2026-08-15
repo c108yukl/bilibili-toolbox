@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 
 from bilibili import config
@@ -55,13 +56,16 @@ def cache_set(key: str, payload, max_age: int) -> None:
         return
     config.ensure_dirs()
     path = _path(key)
-    tmp = path.with_suffix(".tmp")
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
     body = json.dumps(
         {"_cached_at": time.time(), "max_age": max_age, "payload": payload},
         ensure_ascii=False,
     )
-    tmp.write_text(body, encoding="utf-8")
-    tmp.replace(path)  # 原子替换，避免读到半截文件
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        tmp.replace(path)  # 原子替换，避免读到半截文件
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def cache_clear(max_age: int = 0) -> int:

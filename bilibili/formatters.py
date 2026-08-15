@@ -1,4 +1,4 @@
-﻿"""
+"""
 数据格式化与文件保存模块
 
 特性:
@@ -16,6 +16,18 @@ from pathlib import Path
 from bilibili import config
 
 logger = logging.getLogger(__name__)
+
+# 各数据类型支持的保存格式；不支持时归一化为 fallback，避免
+# 生成"扩展名与实际内容不符"的文件（如弹幕存成 .srt 实为纯文本）
+DANMAKU_FORMATS = {"txt", "json", "csv"}
+COMMENT_FORMATS = {"txt", "json", "csv"}
+SUBTITLE_FORMATS = {"srt", "ass", "lrc", "json"}
+
+
+def normalize_fmt(fmt: str, supported: set, fallback: str = "txt") -> str:
+    """将用户选择的格式归一化为该数据类型实际支持的格式"""
+    fmt = (fmt or "").strip().lower()
+    return fmt if fmt in supported else fallback
 
 
 def fmt_time(ts: int) -> str:
@@ -40,12 +52,12 @@ def _unique_path(path: Path) -> Path:
 def format_comment(c: dict) -> dict:
     """将原始评论字典转为精简格式"""
     return {
-        "like": c["like"],
-        "uname": c["member"]["uname"],
-        "time": fmt_time(c["ctime"]),
-        "text": c["content"]["message"],
+        "like": c.get("like", 0),
+        "uname": (c.get("member") or {}).get("uname", ""),
+        "time": fmt_time(c.get("ctime", 0)),
+        "text": (c.get("content") or {}).get("message", ""),
         "reply_count": c.get("rcount", 0),
-        "rpid": c["rpid"],
+        "rpid": c.get("rpid", 0),
     }
 
 
@@ -53,14 +65,14 @@ def format_reply(r: dict) -> dict:
     """将原始回复字典转为精简格式"""
     parent_uname = ""
     if r.get("parent") and r.get("members"):
-        parent_uname = r["members"].get(r["parent"], {}).get("uname", "")
+        parent_uname = (r.get("members") or {}).get(r["parent"], {}).get("uname", "")
     return {
-        "like": r["like"],
-        "uname": r["member"]["uname"],
-        "time": fmt_time(r["ctime"]),
-        "text": r["content"]["message"],
+        "like": r.get("like", 0),
+        "uname": (r.get("member") or {}).get("uname", ""),
+        "time": fmt_time(r.get("ctime", 0)),
+        "text": (r.get("content") or {}).get("message", ""),
         "reply_to": parent_uname,
-        "rpid": r["rpid"],
+        "rpid": r.get("rpid", 0),
     }
 
 
@@ -72,6 +84,7 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt") -> N
     comments_with_replies: [{"comment": {...}, "replies": [...]}, ...]
     """
     config.ensure_dirs()
+    fmt = normalize_fmt(fmt, COMMENT_FORMATS)
     title = f"comments_{bvid}"
     out = _unique_path(config.OUTPUT_DIR / f"{title}.{fmt}")
 
@@ -90,7 +103,7 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt") -> N
             rows.append({**c, "level": "comment", "reply_to": ""})
             for r in item.get("replies", []):
                 rows.append(
-                    {**format_reply(r), "level": "reply", "reply_count": "", "rpid": r["rpid"]}
+                    {**format_reply(r), "level": "reply", "reply_count": "", "rpid": r.get("rpid", 0)}
                 )
         with out.open("w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(
@@ -104,9 +117,11 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt") -> N
         lines = []
         for item in comments_with_replies:
             c = item["comment"]
-            lines.append(f"[+{c['like']}] {c['member']['uname']}: {c['content']['message']}")
+            lines.append(f"[+{c.get('like', 0)}] {(c.get('member') or {}).get('uname', '')}: "
+                         f"{(c.get('content') or {}).get('message', '')}")
             for r in item.get("replies", []):
-                lines.append(f"  ↳[+{r['like']}] {r['member']['uname']}: {r['content']['message']}")
+                lines.append(f"  ↳[+{r.get('like', 0)}] {(r.get('member') or {}).get('uname', '')}: "
+                             f"{(r.get('content') or {}).get('message', '')}")
         out.write_text("\n".join(lines), encoding="utf-8")
 
     total_c = len(comments_with_replies)
@@ -119,6 +134,7 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt") -> N
 def save_danmaku(dms: list, bvid: str, fmt: str = "txt") -> None:
     """保存弹幕到文件。dms 为 dict 列表（见 bilibili.danmaku 返回结构）"""
     config.ensure_dirs()
+    fmt = normalize_fmt(fmt, DANMAKU_FORMATS)
     title = f"danmaku_{bvid}"
     out = _unique_path(config.OUTPUT_DIR / f"{title}.{fmt}")
 
@@ -165,6 +181,7 @@ def save_danmaku(dms: list, bvid: str, fmt: str = "txt") -> None:
 def save_subtitle(sub_obj, bvid: str, lan_code: str, fmt: str = "srt") -> None:
     """保存字幕到文件（srt/ass/lrc/json）"""
     config.ensure_dirs()
+    fmt = normalize_fmt(fmt, SUBTITLE_FORMATS, fallback="srt")
     title = f"subtitle_{bvid}_{lan_code}"
     out = _unique_path(config.OUTPUT_DIR / f"{title}.{fmt}")
 
@@ -181,5 +198,34 @@ def save_subtitle(sub_obj, bvid: str, lan_code: str, fmt: str = "srt") -> None:
         text = sub_obj.to_srt()
 
     out.write_text(text, encoding="utf-8")
-    count = text.count("\n\n")
+    # SRT 块之间以空行分隔，最后一块后无空行，用 split 计数避免少 1
+    count = len([b for b in text.strip().split("\n\n") if b.strip()])
     logger.info("   -> 已保存 %s (%d 条字幕)", out.name, count)
+
+
+# ─── AI 分析保存 ──────────────────────────────────────────
+
+def save_analysis(content: str, bvid: str, kind: str = "analysis", fmt: str = "md",
+                  extra: dict | None = None) -> None:
+    """
+    保存 AI 分析结果（md/json）
+
+    Args:
+        content: 分析正文
+        bvid: 视频BV号
+        kind: 种类标识（analysis / summary / analysis_comments）
+        fmt: md 或 json
+        extra: json 模式下附加的元数据（标题/时间戳等）
+    """
+    import time as _time
+
+    config.ensure_dirs()
+    fmt = normalize_fmt(fmt, {"md", "json"}, fallback="md")
+    out = _unique_path(config.OUTPUT_DIR / f"{kind}_{bvid}.{fmt}")
+    if fmt == "json":
+        payload = {"bvid": bvid, "generated_at": _time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                   "analysis": content, **(extra or {})}
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        out.write_text(content, encoding="utf-8")
+    logger.info("   -> 已保存 %s", out.name)

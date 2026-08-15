@@ -1,23 +1,23 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "bilibili-toolbox"
-version = "1.0.0"
-description = "B站 弹幕/评论/字幕 抓取工具包（Python SDK + CLI）"
+version = "2.0.0"
+description = "B站 弹幕/评论/字幕 抓取工具包（Python SDK + CLI，自研 HTTP 栈）"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "bilibili-toolbox" }]
 dependencies = [
-    "bilibili-api-python>=17.0,<18",
     "aiohttp>=3.8",
 ]
 
 [project.optional-dependencies]
 web = ["streamlit>=1.20"]
 dev = ["pytest>=7", "pytest-asyncio>=0.21"]
+cookies = ["pycryptodomex>=3.20"]
 
 [project.scripts]
 bili = "cli:run"
@@ -29,3 +29,4 @@ py-modules = ["cli"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"

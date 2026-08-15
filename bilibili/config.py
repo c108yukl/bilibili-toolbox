@@ -32,6 +32,7 @@ CACHE_DIR = Path(_env("CACHE_DIR", str(PROJECT_ROOT / ".bili_cache"))).expanduse
 
 # ─── 网络 ────────────────────────────────────────────────
 TIMEOUT = _env_int("TIMEOUT", 15)          # 单次请求超时（秒）
+RETRIES = _env_int("RETRIES", 2)           # 网络错误自动重试次数
 RATE_DELAY = _env_int("RATE_DELAY", 500)   # 评论分页间隔（毫秒）
 REPLY_DELAY = _env_int("REPLY_DELAY", 300) # 楼中楼请求间隔（毫秒）
 

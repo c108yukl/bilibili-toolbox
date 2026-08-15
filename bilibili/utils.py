@@ -48,38 +48,39 @@ def extract_bvid(raw: str) -> str:
     # b23.tv 短链：跟随重定向解析（仅当输入本身是短链接时联网）
     if "b23.tv" in url:
         from bilibili.config import TIMEOUT, USER_AGENT
-        try:
-            import aiohttp
 
-            resolved = _resolve_short_link(url, TIMEOUT, USER_AGENT)
-            if resolved:
-                logger.info("短链接 %s → %s", url, resolved)
-                return resolved
-        except ImportError:
-            logger.warning("未安装 aiohttp，无法解析短链接")
-        except Exception as e:
-            logger.warning("短链接解析失败 %s: %s", url, e)
+        resolved = _resolve_short_link(url, TIMEOUT, USER_AGENT)
+        if resolved:
+            logger.info("短链接 %s → %s", url, resolved)
+            return resolved
         raise ValueError(f"短链接跳转后未找到BV号: {raw}")
 
     raise ValueError(f"无法解析BV号: {raw}")
 
 
 def _resolve_short_link(url: str, timeout: int, user_agent: str) -> str | None:
-    """跟随短链接重定向并返回解析出的 BV 号（同步阻塞式调用）"""
-    import asyncio
+    """跟随短链接重定向并返回解析出的 BV 号（同步阻塞式调用）
 
-    async def _fetch():
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                final_url = str(resp.url)
-                m = _BV_RE.search(final_url)
-                if m:
-                    return m.group(0)
-                text = await resp.text()
-                m = _BV_RE.search(text)
-                return m.group(0) if m else None
+    用 urllib 实现：extract_bvid 可能在运行中的事件循环内被调用（如 CLI 的
+    async main），asyncio.run 会在嵌套事件循环中抛 RuntimeError。
+    """
+    import urllib.request
 
-    return asyncio.run(_fetch())
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            final_url = resp.geturl()
+            m = _BV_RE.search(final_url)
+            if m:
+                return m.group(0)
+            body = resp.read(64 * 1024).decode("utf-8", "replace")
+            m = _BV_RE.search(body)
+            return m.group(0) if m else None
+    except Exception:
+        return None
 
 
 def is_valid_bvid(bvid: str) -> bool:

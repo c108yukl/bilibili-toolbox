@@ -6,7 +6,15 @@ import json
 import pytest
 
 from bilibili import config
-from bilibili.formatters import save_comments, save_danmaku
+from bilibili.formatters import (
+    COMMENT_FORMATS,
+    DANMAKU_FORMATS,
+    SUBTITLE_FORMATS,
+    normalize_fmt,
+    save_comments,
+    save_danmaku,
+    save_subtitle,
+)
 
 config.OUTPUT_DIR = config.PROJECT_ROOT / ".bili_output_test"
 
@@ -61,6 +69,42 @@ def _danmaku():
     ]
 
 
+class TestNormalizeFmt:
+    def test_supported_kept(self):
+        assert normalize_fmt("JSON", DANMAKU_FORMATS) == "json"
+        assert normalize_fmt("csv", COMMENT_FORMATS) == "csv"
+        assert normalize_fmt("srt", SUBTITLE_FORMATS, fallback="srt") == "srt"
+
+    def test_unsupported_fallback(self):
+        assert normalize_fmt("srt", DANMAKU_FORMATS) == "txt"
+        assert normalize_fmt("ass", COMMENT_FORMATS) == "txt"
+        assert normalize_fmt("txt", SUBTITLE_FORMATS, fallback="srt") == "srt"
+
+    def test_none_fallback(self):
+        assert normalize_fmt(None, DANMAKU_FORMATS) == "txt"
+        assert normalize_fmt("", SUBTITLE_FORMATS, fallback="srt") == "srt"
+
+
+class TestSaveSubtitle:
+    def test_srt_count_not_off_by_one(self):
+        # to_srt 返回 2 块字幕，日志统计应为 2（旧实现 count("\n\n") 会少 1）
+        class Sub:
+            def to_srt(self):
+                return (
+                    "1\n00:00:00,000 --> 00:00:01,000\nA\n\n"
+                    "2\n00:00:01,000 --> 00:00:02,000\nB\n\n"
+                )
+
+        save_subtitle(Sub(), "BV1TESTTEST1", "ai-zh", "srt")
+        out = config.OUTPUT_DIR / "subtitle_BV1TESTTEST1_ai-zh.srt"
+        assert out.read_text(encoding="utf-8").startswith("1\n00:00:00,000")
+
+    def test_unsupported_fmt_falls_back_to_srt(self):
+        # txt 对字幕不适用，兜底 srt 且文件扩展名一致
+        save_subtitle(DummySubtitle(), "BV1TESTTEST1", "ai-zh", "txt")
+        assert (config.OUTPUT_DIR / "subtitle_BV1TESTTEST1_ai-zh.srt").exists()
+
+
 class TestSaveDanmaku:
     def test_txt(self):
         save_danmaku(_danmaku(), "BV1TESTTEST1", "txt")
@@ -89,6 +133,14 @@ class TestSaveDanmaku:
         assert (config.OUTPUT_DIR / "danmaku_BV1TESTTEST1.txt").exists()
         assert (config.OUTPUT_DIR / "danmaku_BV1TESTTEST1_1.txt").exists()
 
+    def test_unsupported_fmt_falls_back_to_txt(self):
+        # srt 对弹幕不适用：内容按 txt 写且扩展名同步为 .txt
+        save_danmaku(_danmaku(), "BV1TESTTEST1", "srt")
+        out = config.OUTPUT_DIR / "danmaku_BV1TESTTEST1.txt"
+        assert out.exists()
+        assert "哈哈" in out.read_text(encoding="utf-8")
+        assert not (config.OUTPUT_DIR / "danmaku_BV1TESTTEST1.srt").exists()
+
 
 class TestSaveComments:
     def test_json_contains_replies(self):
@@ -112,3 +164,18 @@ class TestSaveComments:
             rows = list(csv.DictReader(f))
         assert rows[0]["level"] == "comment"
         assert rows[1]["level"] == "reply"
+
+    def test_unsupported_fmt_falls_back_to_txt(self):
+        save_comments(_comments(), "BV1TESTTEST1", "ass")
+        out = config.OUTPUT_DIR / "comments_BV1TESTTEST1.txt"
+        assert out.exists()
+        assert "第一条评论" in out.read_text(encoding="utf-8")
+
+    def test_missing_optional_fields(self):
+        # 部分评论字段缺失（如被折叠/无 like）不应抛 KeyError
+        items = [{"comment": {"content": {"message": "x"}}, "replies": []}]
+        save_comments(items, "BV1TESTTEST1", "json")
+        out = config.OUTPUT_DIR / "comments_BV1TESTTEST1.json"
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data[0]["text"] == "x"
+        assert data[0]["like"] == 0
