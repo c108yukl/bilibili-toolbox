@@ -903,6 +903,10 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   // SW 推送的直播事件
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'liveDanmaku' && msg.lines) appendLiveLines(msg.lines, msg.count);
+    else if (msg.action === 'liveLog' && msg.text) {
+      const cnt = $('pv-live-count');
+      if (cnt) cnt.textContent = msg.text;
+    }
     else if (msg.action === 'liveState') {
       if (msg.on) setLiveUI(true);
       else setLiveUI(false, msg.reason);

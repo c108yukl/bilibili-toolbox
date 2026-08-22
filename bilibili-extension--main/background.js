@@ -103,8 +103,10 @@ async function liveStart(roomId) {
     const info = await fetchDanmuInfo(roomId, cookieStr, buvid);
     token = info.token;
     if (info.host.host) wsUrl = `wss://${info.host.host}:${info.host.wss_port || 443}/sub`;
+    devLog('[live] token 长度', token.length, '服务器', info.host.host || '默认');
   } catch (e) {
-    devLog('[live] getDanmuInfo 失败，降级匿名直连:', e && e.message);
+    // B站已封禁匿名连接，无 token 必失败——把原因推给弹窗而不是静默降级
+    liveBroadcast({ action: 'liveLog', text: `⚠️ 获取弹幕 token 失败：${(e && e.message) || e}` });
   }
 
   liveRoomId = roomId;
@@ -328,6 +330,7 @@ async function executeMcpTool(tool, args, cookieStr) {
       return {
         room_id: roomId,
         token_len: info.token.length,
+        token: info.token,
         host: info.host.host || '',
         wss_port: info.host.wss_port || 443,
       };
