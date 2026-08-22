@@ -143,6 +143,21 @@
       <div class="pv-hint" id="pv-cookie-status" role="status" aria-live="polite"></div>
     </section>
 
+    <!-- 直播（live.bilibili.com 页面自动显示） -->
+    <section class="pv-glass pv-card pv-panel" id="pv-sec-live" style="display:none" aria-labelledby="pv-sec-live-title">
+      <div class="pv-section-title" id="pv-sec-live-title">直播 · LIVE</div>
+      <div class="pv-live-room">
+        <div class="pv-live-title" id="pv-live-title">直播间</div>
+        <div class="pv-live-meta"><span id="pv-live-anchor"></span><span id="pv-live-stat"></span></div>
+      </div>
+      <div class="pv-live-actions">
+        <button class="pv-btn" id="pv-btn-live" style="flex:1">🔴 开始监听弹幕</button>
+        <button class="pv-btn" id="pv-btn-live-export" title="导出已监听的弹幕为 TXT">导出</button>
+      </div>
+      <div class="pv-hint" id="pv-live-count" role="status" aria-live="polite">未开始监听</div>
+      <div class="pv-live-feed" id="pv-live-feed" aria-live="polite"></div>
+    </section>
+
     <!-- 结果面板：UP 主 -->
     <section class="pv-glass pv-card pv-panel" id="pv-panel-up" aria-labelledby="pv-up-name">
       <div class="pv-panel-head">👤 UP 主信息 <span class="pv-tag">UP</span></div>

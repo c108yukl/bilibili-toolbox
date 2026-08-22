@@ -1,0 +1,163 @@
+/* ============================================================
+   B站爬虫扩展 - 设置页风格主题层（跟随「界面风格」设置）
+   body.style-editorial / body.style-neumorphism 覆盖 shared.css
+   的深色玻璃默认（Aurora），未加类时保持原样。
+   ============================================================ */
+
+/* ════════ Editorial（编辑杂志风）：米白单色 · 衬线 · 细线 ════════ */
+body.style-editorial {
+  --bg: #F9F8F6;
+  --card: #F9F8F6;
+  --card-border: rgba(28, 28, 28, .14);
+  --text: #1C1C1C;
+  --text-dim: rgba(28, 28, 28, .55);
+  --input-bg: rgba(28, 28, 28, .03);
+  --accent: #1C1C1C;
+  --accent2: #1C1C1C;
+  --accent-grad: linear-gradient(135deg, #1C1C1C, #1C1C1C);
+  --ok: #1C1C1C;
+  --warn: #8a6d1a;
+  --radius: 0;
+  --radius-sm: 0;
+  background: #F9F8F6 !important;   /* 覆盖 body 内联深色渐变 */
+}
+body.style-editorial h1 { font-family: Georgia, 'Times New Roman', 'Songti SC', SimSun, serif; }
+body.style-editorial .header .sub { color: rgba(28, 28, 28, .5); }
+body.style-editorial .logo {
+  border-radius: 0; box-shadow: none; border: 1px solid #1C1C1C;
+  font-family: Georgia, serif; background: transparent; color: #1C1C1C;
+}
+body.style-editorial .card {
+  background: #F9F8F6;
+  border: 1px solid rgba(28, 28, 28, .14);
+  border-radius: 0; box-shadow: none;
+}
+body.style-editorial .card:hover { border-color: rgba(28, 28, 28, .4); }
+body.style-editorial .card h2 { color: #1C1C1C; }
+body.style-editorial .card h2::before {
+  background: #1C1C1C; border-radius: 0;
+}
+body.style-editorial input[type="text"], body.style-editorial input[type="password"],
+body.style-editorial input[type="number"], body.style-editorial select, body.style-editorial textarea {
+  border: 1px solid rgba(28, 28, 28, .18); border-radius: 0;
+  background: transparent; color: #1C1C1C;
+}
+body.style-editorial input:focus, body.style-editorial select:focus, body.style-editorial textarea:focus {
+  border-color: #1C1C1C; box-shadow: none;
+}
+body.style-editorial input::placeholder, body.style-editorial textarea::placeholder { color: rgba(28, 28, 28, .35); }
+body.style-editorial .btn {
+  background: transparent; color: rgba(28, 28, 28, .75);
+  border: 1px solid rgba(28, 28, 28, .18); border-radius: 0;
+}
+body.style-editorial .btn:hover { background: #F0EEEA; border-color: rgba(28, 28, 28, .45); color: #1C1C1C; }
+body.style-editorial .btn-primary {
+  background: #1C1C1C; color: #F9F8F6; border-radius: 0; box-shadow: none;
+}
+body.style-editorial .btn-primary:hover { background: transparent; color: #1C1C1C; box-shadow: inset 0 0 0 1px #1C1C1C; }
+body.style-editorial .switch .track { background: transparent; border: 1px solid rgba(28, 28, 28, .3); border-radius: 0; }
+body.style-editorial .switch .track::after { border-radius: 0; background: rgba(28, 28, 28, .35); }
+body.style-editorial .switch input:checked + .track { background: #1C1C1C; }
+body.style-editorial .switch input:checked + .track::after { left: 17.5px; background: #F9F8F6; }
+body.style-editorial .row { border-bottom: 1px solid rgba(28, 28, 28, .07); }
+body.style-editorial .row:hover { background: rgba(28, 28, 28, .025); }
+body.style-editorial .tab-btn { color: rgba(28, 28, 28, .5); }
+body.style-editorial .tab-btn:hover { color: #1C1C1C; background: rgba(28, 28, 28, .04); }
+body.style-editorial .tab-btn.active {
+  color: #1C1C1C; border-color: rgba(28, 28, 28, .14);
+  background: rgba(28, 28, 28, .05);
+  box-shadow: inset 3px 0 0 #1C1C1C;
+}
+body.style-editorial .actions {
+  background: rgba(249, 248, 246, .94) !important;
+  border: 1px solid #1C1C1C; border-radius: 0;
+}
+body.style-editorial .dirty-badge { color: #8a6d1a; border-color: rgba(138, 109, 26, .5); }
+body.style-editorial .modal { background: #F9F8F6; border-radius: 0; border: 1px solid #1C1C1C; }
+body.style-editorial .modal h3 { color: #1C1C1C; }
+body.style-editorial .swatch-wrap.active, body.style-editorial .style-wrap.active {
+  border-color: #1C1C1C; background: rgba(28, 28, 28, .05);
+}
+body.style-editorial .status-dot { background: #1C1C1C !important; }
+body.style-editorial ::-webkit-scrollbar-thumb { background: rgba(28, 28, 28, .25); }
+
+/* ════════ Neumorphism（新拟物）：浅灰同色 · 双光源阴影 ════════ */
+body.style-neumorphism {
+  --bg: #e0e5ec;
+  --card: #e0e5ec;
+  --card-border: transparent;
+  --text: #333333;
+  --text-dim: #6b7280;
+  --input-bg: #e0e5ec;
+  --radius: 16px;
+  --radius-sm: 12px;
+  background: #e0e5ec !important;   /* 覆盖 body 内联深色渐变 */
+}
+body.style-neumorphism .header .sub { color: #6b7280; }
+body.style-neumorphism .logo {
+  border-radius: 12px; background: #e0e5ec; color: var(--accent);
+  box-shadow: 3px 3px 7px #b8bcc2, -3px -3px 7px #ffffff;
+}
+body.style-neumorphism .card {
+  background: #e0e5ec; border: none; border-radius: 16px;
+  box-shadow: 6px 6px 12px #b8bcc2, -6px -6px 12px #ffffff;
+  transition: box-shadow .3s ease-in-out;
+}
+body.style-neumorphism .card:hover { box-shadow: 4px 4px 9px #b8bcc2, -4px -4px 9px #ffffff; border-color: transparent; }
+body.style-neumorphism .card h2::before { border-radius: 4px; }
+body.style-neumorphism input[type="text"], body.style-neumorphism input[type="password"],
+body.style-neumorphism input[type="number"], body.style-neumorphism select, body.style-neumorphism textarea {
+  border: none; border-radius: 12px; background: #e0e5ec; color: #333;
+  box-shadow: inset 2px 2px 5px #b8bcc2, inset -2px -2px 5px #ffffff;
+}
+body.style-neumorphism input:focus, body.style-neumorphism select:focus, body.style-neumorphism textarea:focus {
+  border: none; box-shadow: inset 1px 1px 3px #b8bcc2, inset -1px -1px 3px #ffffff;
+}
+body.style-neumorphism input::placeholder, body.style-neumorphism textarea::placeholder { color: #9aa1ab; }
+body.style-neumorphism .btn {
+  background: #e0e5ec; color: #444; border: none; border-radius: 12px;
+  box-shadow: 3px 3px 7px #b8bcc2, -3px -3px 7px #ffffff;
+  transition: box-shadow .3s ease-in-out;
+}
+body.style-neumorphism .btn:hover { box-shadow: 2px 2px 5px #b8bcc2, -2px -2px 5px #ffffff; border-color: transparent; }
+body.style-neumorphism .btn:active { box-shadow: inset 2px 2px 5px #b8bcc2, inset -2px -2px 5px #ffffff; }
+body.style-neumorphism .btn-primary {
+  background: var(--accent); border: none; border-radius: 14px;
+  box-shadow: 5px 5px 11px #b8bcc2, -5px -5px 11px #ffffff;
+}
+body.style-neumorphism .btn-primary:hover { filter: brightness(1.05); box-shadow: 3px 3px 8px #b8bcc2, -3px -3px 8px #ffffff; }
+body.style-neumorphism .btn-primary:active { box-shadow: inset 2px 2px 5px #b8bcc2, inset -2px -2px 5px #ffffff; }
+body.style-neumorphism .switch .track {
+  background: #e0e5ec; border-radius: 99px;
+  box-shadow: inset 2px 2px 5px #b8bcc2, inset -2px -2px 5px #ffffff;
+}
+body.style-neumorphism .switch .track::after {
+  background: #e0e5ec; border-radius: 50%;
+  box-shadow: 1px 1px 3px #b8bcc2, -1px -1px 3px #ffffff;
+}
+body.style-neumorphism .switch input:checked + .track { background: color-mix(in srgb, var(--accent) 26%, #e0e5ec); box-shadow: none; }
+body.style-neumorphism .switch input:checked + .track::after { background: #fff; box-shadow: none; }
+body.style-neumorphism .row { border-bottom: none; }
+body.style-neumorphism .row:hover { background: transparent; }
+body.style-neumorphism .tab-btn { color: #6b7280; }
+body.style-neumorphism .tab-btn:hover { color: #333; }
+body.style-neumorphism .tab-btn.active {
+  color: #333; border-color: transparent; border-radius: 12px;
+  background: #e0e5ec;
+  box-shadow: 3px 3px 7px #b8bcc2, -3px -3px 7px #ffffff;
+}
+body.style-neumorphism .actions {
+  background: #e0e5ec !important;
+  border: none; border-radius: 16px;
+  box-shadow: 6px 6px 12px #b8bcc2, -6px -6px 12px #ffffff;
+}
+body.style-neumorphism .modal {
+  background: #e0e5ec; border: none; border-radius: 16px;
+  box-shadow: 10px 10px 22px #b8bcc2, -10px -10px 22px #ffffff;
+}
+body.style-neumorphism .modal h3 { color: #333; }
+body.style-neumorphism .modal .btn-primary { color: #fff; }
+body.style-neumorphism .style-wrap.active { border-color: var(--accent); background: rgba(0,0,0,.02); }
+body.style-neumorphism .style-chip { box-shadow: none !important; }
+body.style-neumorphism .style-chip-neu { box-shadow: 3px 3px 7px #b8bcc2, -3px -3px 7px #ffffff !important; }
+body.style-neumorphism ::-webkit-scrollbar-thumb { background: #b8bcc2; }

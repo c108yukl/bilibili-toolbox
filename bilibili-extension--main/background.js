@@ -62,6 +62,155 @@ function notifyFloat(ok, message) {
 let devMode = false;
 function devLog(...args) { if (devMode) console.log('[dev]', ...args); }
 
+// ============ 直播弹幕监听（live.bilibili.com） ============
+// 协议：B站直播 WS sub 协议 —— 16 字节帧头（包长/头长/版本/操作码/序号）
+// AUTH(7) → AUTH_REPLY(8)，HEARTBEAT(2) 每 30s，MESSAGE(5) 推送（ver2=zlib 压缩）
+let liveWs = null;
+let liveHbTimer = null;
+let liveRoomId = null;
+let liveLines = [];          // 环形缓冲：全部已收弹幕（导出用）
+let liveConnected = false;
+const LIVE_WS_URL = 'wss://broadcastlv.chat.bilibili.com/sub';
+const LIVE_MAX_LINES = 20000;
+
+function livePack(op, body) {
+  const data = new TextEncoder().encode(JSON.stringify(body || {}));
+  const buf = new ArrayBuffer(16 + data.length);
+  const dv = new DataView(buf);
+  dv.setUint32(0, 16 + data.length);
+  dv.setUint16(4, 16);
+  dv.setUint16(6, 1);        // protover 1（控制帧明文）
+  dv.setUint32(8, op);
+  dv.setUint32(12, 1);
+  new Uint8Array(buf, 16).set(data);
+  return buf;
+}
+
+async function liveInflate(u8) {
+  const ds = new DecompressionStream('deflate');   // zlib 流
+  const stream = new Blob([u8]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function liveBroadcast(payload) {
+  try { chrome.runtime.sendMessage(payload, () => void chrome.runtime.lastError); } catch (e) { }
+}
+
+async function liveHandleData(u8) {
+  // 解析一帧 MESSAGE 数据：JSON 单条或解压后再切帧
+  let text = null;
+  try { text = new TextDecoder().decode(u8); JSON.parse(text); }
+  catch (e) { text = null; }
+  if (text) { await liveHandleJSON(JSON.parse(text)); return; }
+  try {
+    const raw = await liveInflate(u8);
+    let off = 0;
+    while (off + 16 <= raw.length) {
+      const dv = new DataView(raw.buffer, raw.byteOffset + off);
+      const len = dv.getUint32(0);
+      if (off + len > raw.length) break;
+      const body = raw.slice(off + 16, off + len);
+      await liveHandleData(body);   // 解压后的子帧
+      off += len;
+    }
+  } catch (e) { devLog('[live] 解压失败', e && e.message); }
+}
+
+async function liveHandleJSON(obj) {
+  if (!obj || !obj.cmd) return;
+  if (obj.cmd === 'DANMU_MSG') {
+    const info = obj.info || [];
+    const line = {
+      ts: Date.now(),
+      user: (info[2] && info[2][1]) || '',
+      text: info[1] || '',
+    };
+    if (line.text) {
+      liveLines.push(line);
+      if (liveLines.length > LIVE_MAX_LINES) liveLines.splice(0, liveLines.length - LIVE_MAX_LINES);
+      liveBroadcast({ action: 'liveDanmaku', lines: [line], count: liveLines.length });
+    }
+  }
+  // 其他 cmd（礼物/进场/SC 等）暂不处理，保持轻量
+}
+
+async function liveStart(roomId) {
+  if (liveConnected && liveRoomId === roomId) return;
+  liveStop();
+  const cookies = await getBiliCookies();
+  const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  const uid = parseInt((cookies.find(c => c.name === 'DedeUserID') || {}).value || '0', 10) || 0;
+  // 弹幕服务器地址 + token
+  const danmu = await biliFetchJSON(
+    `https://api.live.bilibili.com/xlive/web-room/v1/danmu/getInfoByRoom?room_id=${roomId}`,
+    { cookie: cookieStr }
+  );
+  const token = danmu.token || (danmu.data && danmu.data.token) || '';
+  const host = ((danmu.host_list || (danmu.data && danmu.data.host_list) || [{}])[0]);
+  const wsUrl = host.host ? `wss://${host.host}:${host.wss_port || 443}/sub` : LIVE_WS_URL;
+  liveRoomId = roomId;
+  liveLines = [];
+  return new Promise((resolve, reject) => {
+    try { liveWs = new WebSocket(wsUrl); }
+    catch (e) { reject(new Error('无法连接弹幕服务器')); return; }
+    liveWs.binaryType = 'arraybuffer';
+    const authTimer = setTimeout(() => {
+      reject(new Error('弹幕服务器认证超时'));
+      liveStop();
+    }, 10000);
+    liveWs.onopen = () => {
+      liveWs.send(livePack(7, {   // AUTH
+        uid, roomid: roomId, protover: 2, platform: 'web', type: 2, key: token,
+      }));
+      liveHbTimer = setInterval(() => {
+        try { if (liveWs && liveWs.readyState === WebSocket.OPEN) liveWs.send(livePack(2)); }
+        catch (e) { }
+      }, 30000);
+    };
+    liveWs.onmessage = async (ev) => {
+      const dv = new DataView(ev.data);
+      const op = dv.getUint32(8);
+      const body = new Uint8Array(ev.data.slice(16));
+      if (op === 8) {          // AUTH_REPLY
+        clearTimeout(authTimer);
+        let code = -1;
+        try { code = (JSON.parse(new TextDecoder().decode(body)) || {}).code; } catch (e) { }
+        if (code === 0) {
+          liveConnected = true;
+          liveBroadcast({ action: 'liveState', on: true, roomId });
+          resolve();
+        } else {
+          reject(new Error('弹幕服务器认证失败(code ' + code + ')'));
+          liveStop();
+        }
+      } else if (op === 5) {   // MESSAGE
+        await liveHandleData(body);
+      }
+    };
+    liveWs.onclose = () => {
+      const was = liveConnected;
+      liveConnected = false;
+      clearInterval(liveHbTimer);
+      if (was) liveBroadcast({ action: 'liveState', on: false });
+    };
+    liveWs.onerror = () => {
+      clearTimeout(authTimer);
+      if (!liveConnected) { reject(new Error('弹幕服务器连接失败')); }
+      liveStop();
+    };
+  });
+}
+
+function liveStop() {
+  clearInterval(liveHbTimer);
+  liveHbTimer = null;
+  try { if (liveWs) { liveWs.onclose = null; liveWs.close(); } } catch (e) { }
+  liveWs = null;
+  if (liveConnected) liveBroadcast({ action: 'liveState', on: false });
+  liveConnected = false;
+  liveRoomId = null;
+}
+
 // ============ UI 风格切换（aurora / editorial / neumorphism） ============
 // action.default_popup 是静态的，用 chrome.action.setPopup 按设置动态切换
 const STYLE_POPUPS = {
@@ -1223,6 +1372,83 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try { sendResponse(resp); } catch (e) { }
     })();
     return true; // 异步响应
+  }
+  if (msg.action === 'getQuickInfo') {
+    // 弹窗打开时自动获取视频标题 + UP 主信息（无需跑任务）
+    (async () => {
+      try {
+        const cookies = await getBiliCookies();
+        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        const bvid = extractBVID(msg.bvid);
+        if (!bvid) { sendResponse({ ok: false, error: '无效 BV 号' }); return; }
+        const info = await fetchVideoInfo(bvid, cookieStr);
+        const d = info.data || {};
+        let up = null;
+        const mid = d.owner && d.owner.mid;
+        if (mid) { try { up = await fetchUpInfo(mid, cookieStr); } catch (e) { } }
+        sendResponse({
+          ok: true, bvid,
+          title: d.title || '',
+          upName: (d.owner || {}).name || '',
+          duration: d.duration || 0,
+          stat: d.stat || null,
+          up,
+        });
+      } catch (e) {
+        try { sendResponse({ ok: false, error: String((e && e.message) || e) }); } catch (e2) { }
+      }
+    })();
+    return true;
+  }
+  if (msg.action === 'getLiveInfo') {
+    // 直播间信息（标题 / 主播 / 人气 / 开播状态）
+    (async () => {
+      try {
+        const cookies = await getBiliCookies();
+        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        const data = await biliFetchJSON(
+          `https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id=${parseInt(msg.roomId, 10)}`,
+          { cookie: cookieStr }
+        );
+        const d = data || {};
+        const room = d.room_info || {};
+        const anchor = ((d.anchor_info || {}).base_info) || {};
+        const watched = (d.watched_show || {}).num;
+        sendResponse({
+          ok: true,
+          roomId: room.room_id || parseInt(msg.roomId, 10),
+          title: room.title || '',
+          anchor: anchor.uname || '',
+          live: room.live_status === 1,
+          liveStatus: room.live_status,
+          area: room.area_name || '',
+          watched: typeof watched === 'number' ? watched.toLocaleString() : '',
+        });
+      } catch (e) {
+        try { sendResponse({ ok: false, error: String((e && e.message) || e) }); } catch (e2) { }
+      }
+    })();
+    return true;
+  }
+  if (msg.action === 'liveStart') {
+    (async () => {
+      try { await liveStart(parseInt(msg.roomId, 10)); sendResponse({ ok: true }); }
+      catch (e) { try { sendResponse({ ok: false, error: String((e && e.message) || e) }); } catch (e2) { } }
+    })();
+    return true;
+  }
+  if (msg.action === 'liveStop') {
+    liveStop();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg.action === 'liveStatus') {
+    sendResponse({ connected: liveConnected, roomId: liveRoomId, count: liveLines.length });
+    return true;
+  }
+  if (msg.action === 'liveExport') {
+    sendResponse({ ok: true, lines: liveLines.slice() });
+    return true;
   }
   if (msg.action === 'floatScrape') {
     const bvid = extractBVID(msg.bvid);

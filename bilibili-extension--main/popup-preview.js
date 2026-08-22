@@ -710,6 +710,82 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     toast('🪄 已全选所有任务', 'ok');
   }
 
+  // ── 自动获取视频/UP 信息（打开视频页时同步展示） ──
+  async function autoQuickInfo(bvid) {
+    try {
+      $('pv-hint-detect').textContent = '⏳ 正在获取视频信息...';
+      const r = await chrome.runtime.sendMessage({ action: 'getQuickInfo', bvid });
+      if (r && r.ok) {
+        const stat = r.stat || {};
+        const bits = [];
+        if (stat.view != null) bits.push(`▶ ${Number(stat.view).toLocaleString()}`);
+        if (stat.danmaku != null) bits.push(`💬 ${Number(stat.danmaku).toLocaleString()}`);
+        if (stat.reply != null) bits.push(`🗨 ${Number(stat.reply).toLocaleString()}`);
+        $('pv-hint-detect').textContent = `🎬 ${r.title}${bits.length ? '  ·  ' + bits.join(' / ') : ''}`;
+        if (r.up) showUp(r.up);          // UP 面板即时填充
+      } else if (r && r.error) {
+        $('pv-hint-detect').textContent = `⚠️ ${r.error}`;
+      }
+    } catch (e) { }
+  }
+
+  // ── 直播面板 ──
+  let liveOn = false;
+  let liveRoomCur = null;
+  function setLiveUI(on, err) {
+    liveOn = !!on;
+    const btn = $('pv-btn-live');
+    if (btn) btn.textContent = liveOn ? '⏹ 停止监听' : '🔴 开始监听弹幕';
+    const cnt = $('pv-live-count');
+    if (cnt) {
+      if (err) cnt.textContent = `⚠️ ${err}`;
+      else cnt.textContent = liveOn ? '🟢 监听中，等待弹幕...' : '未开始监听';
+    }
+  }
+  function appendLiveLines(lines, total) {
+    const feed = $('pv-live-feed');
+    const cnt = $('pv-live-count');
+    if (feed) {
+      for (const l of lines) {
+        const div = document.createElement('div');
+        div.className = 'pv-dm-line';
+        const b = document.createElement('b');
+        b.textContent = l.user;
+        div.append(b, document.createTextNode(' ' + l.text));
+        feed.appendChild(div);
+      }
+      while (feed.children.length > 200) feed.removeChild(feed.firstChild);   // 视觉层限长
+      feed.scrollTop = feed.scrollHeight;
+    }
+    if (cnt && liveOn) cnt.textContent = `🟢 监听中 · 已收 ${total != null ? total : '?'} 条弹幕`;
+  }
+  async function initLivePanel(roomId) {
+    const sec = $('pv-sec-live');
+    if (!sec) return;
+    sec.style.display = '';
+    liveRoomCur = roomId;
+    try {
+      const r = await chrome.runtime.sendMessage({ action: 'getLiveInfo', roomId });
+      if (r && r.ok) {
+        if ($('pv-live-title')) $('pv-live-title').textContent = r.title || `直播间 ${roomId}`;
+        if ($('pv-live-anchor')) $('pv-live-anchor').textContent = r.anchor ? `🧑‍🎤 ${r.anchor}` : '';
+        if ($('pv-live-stat')) {
+          $('pv-live-stat').textContent =
+            (r.live ? '🔴 直播中' : '⏸ 未开播') +
+            (r.area ? ` · ${r.area}` : '') +
+            (r.watched ? ` · 人气 ${r.watched}` : '');
+        }
+        liveRoomCur = r.roomId || roomId;
+      }
+    } catch (e) { }
+    // popup 重开时恢复监听状态（SW 在后台持续收集）
+    try {
+      const st = await chrome.runtime.sendMessage({ action: 'liveStatus' });
+      if (st && st.connected) { setLiveUI(true); appendLiveLines([], st.count); }
+      else setLiveUI(false);
+    } catch (e) { setLiveUI(false); }
+  }
+
   // ── 初始化 ──
   (async function init() {
     // 动态版本号 + 主题
@@ -718,8 +794,9 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
       if (ver) $('pv-version').textContent = 'v' + ver;
     } catch (e) { }
 
-    // 自动识别当前页 BV
+    // 自动识别当前页 BV；直播间则进入直播模式
     let tabBvid = null;
+    let liveRoom = null;
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const url = tabs[0]?.url;
@@ -729,14 +806,20 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
           tabBvid = m;
           $('pv-bvid').value = m;
           $('pv-hint-detect').textContent = `✅ 已自动识别: ${m}`;
-        } else if (url.includes('bilibili.com')) {
-          $('pv-hint-detect').textContent = '📌 当前在B站但未检测到视频BV号';
+        } else {
+          const lm = url.match(/live\.bilibili\.com\/(?:h5\/)?(\d+)/);
+          if (lm) {
+            liveRoom = parseInt(lm[1], 10);
+            $('pv-hint-detect').textContent = `🔴 检测到直播间: ${liveRoom}`;
+          } else if (url.includes('bilibili.com')) {
+            $('pv-hint-detect').textContent = '📌 当前在B站但未检测到视频BV号';
+          }
         }
       }
     } catch (e) { }
 
     // 记忆上次输入的 BV
-    if (!tabBvid) {
+    if (!tabBvid && !liveRoom) {
       try {
         const s = await chrome.storage.session.get('lastBvid');
         if (s.lastBvid) {
@@ -765,6 +848,12 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
       if (cfg.autoCookie) fillCookieAuto();
     } catch (e) { }
 
+    // 打开视频页：自动同步视频标题 + UP 主信息（无需跑任务）
+    if (tabBvid) autoQuickInfo(tabBvid);
+
+    // 直播间：初始化直播面板
+    if (liveRoom) initLivePanel(liveRoom);
+
     refreshBatch();
   })();
 
@@ -779,6 +868,46 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     try { await fillCookieAuto(); } finally { $('pv-btn-cookie').disabled = false; }
   });
   $('pv-btn-select-all').addEventListener('click', selectAll);
+
+  // 直播：开始/停止监听 + 导出
+  $('pv-btn-live')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!liveRoomCur) return;
+    if (liveOn) {
+      await chrome.runtime.sendMessage({ action: 'liveStop' });
+      setLiveUI(false);
+      return;
+    }
+    setLiveUI(false, '⏳ 连接弹幕服务器...');
+    try {
+      const r = await chrome.runtime.sendMessage({ action: 'liveStart', roomId: liveRoomCur });
+      if (r && r.ok) setLiveUI(true);
+      else setLiveUI(false, (r && r.error) || '连接失败');
+    } catch (err) {
+      setLiveUI(false, String(err && err.message || err));
+    }
+  });
+  $('pv-btn-live-export')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      const r = await chrome.runtime.sendMessage({ action: 'liveExport' });
+      if (r && r.ok && r.lines && r.lines.length) {
+        const text = r.lines.map(l => `${l.user}: ${l.text}`).join('\n');
+        addDownload(`live_danmaku_${liveRoomCur || 'room'}.txt`, text, 'text/plain');
+        toast(`📦 已导出 ${r.lines.length} 条直播弹幕`, 'ok');
+      } else {
+        toast('暂无可导出的弹幕', 'err');
+      }
+    } catch (err) { toast('导出失败: ' + (err && err.message || err), 'err'); }
+  });
+  // SW 推送的直播事件
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'liveDanmaku' && msg.lines) appendLiveLines(msg.lines, msg.count);
+    else if (msg.action === 'liveState') {
+      if (msg.on) setLiveUI(true);
+      else setLiveUI(false, msg.reason);
+    }
+  });
 
   for (const id of ['pv-chk-dm', 'pv-chk-cm', 'pv-chk-sub']) {
     $(id).addEventListener('change', syncOptionStates);

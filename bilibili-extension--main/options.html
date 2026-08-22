@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>B站爬虫 - 设置</title>
   <link rel="stylesheet" href="styles/shared.css">
+  <link rel="stylesheet" href="styles/options-theme.css">
   <style>
     /* ── 设置页布局（特有样式） ── */
     body {
@@ -158,6 +159,15 @@
   </style>
 </head>
 <body>
+  <!-- 尽早应用界面风格类，避免深色闪屏 -->
+  <script>
+    try {
+      chrome.storage.local.get('settings', (s) => {
+        const st = ((s && s.settings) || {}).uiStyle;
+        if (st === 'editorial' || st === 'neumorphism') document.body.classList.add('style-' + st);
+      });
+    } catch (e) { }
+  </script>
   <div class="header">
     <div class="logo">B</div>
     <div>
@@ -197,7 +207,10 @@
               <span>新拟物</span>
             </div>
           </div>
-          <div class="hint" style="margin-top:8px">弹窗的整体设计风格（Aurora Console / Editorial / Neumorphism），保存后下次打开弹窗生效</div>
+          <div class="hint" style="margin-top:8px">弹窗的整体设计风格（Aurora Console / Editorial / Neumorphism），保存后下次打开弹窗生效。点选即可在本页即时预览配色</div>
+          <div class="row" style="border-bottom:none;padding-left:0">
+            <button class="btn" id="btn-preview-style" title="在新标签页打开所选风格的弹窗页面">👁 预览弹窗</button>
+          </div>
         </div>
         <div class="card">
           <h2>🎨 主题色</h2>

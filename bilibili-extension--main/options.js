@@ -199,6 +199,7 @@ async function load() {
   for (const el of document.querySelectorAll('.style-wrap')) {
     el.classList.toggle('active', el.dataset.style === style);
   }
+  applyOptionsStyle(style);
   $('def-dm').checked = cfg.defaultDanmaku;
   $('def-cm').checked = cfg.defaultComments;
   $('def-sub').checked = cfg.defaultSubtitle;
@@ -342,14 +343,26 @@ $('btn-sound-test').addEventListener('click', playTestSound);
 $('btn-export').addEventListener('click', exportSettings);
 $('btn-import').addEventListener('click', importSettings);
 
-// 界面风格选择：切换高亮（保存后经 background setPopup 生效）
+// 界面风格选择：本页即时预览 + 保存后经 background setPopup 生效
+function applyOptionsStyle(style) {
+  document.body.classList.remove('style-aurora', 'style-editorial', 'style-neumorphism');
+  if (style !== 'aurora') document.body.classList.add('style-' + style);
+}
+function currentStyle() {
+  return (document.querySelector('.style-wrap.active') || {}).dataset?.style || 'aurora';
+}
 for (const el of document.querySelectorAll('.style-wrap')) {
   el.addEventListener('click', () => {
     for (const other of document.querySelectorAll('.style-wrap')) other.classList.remove('active');
     el.classList.add('active');
+    applyOptionsStyle(el.dataset.style);   // 即时预览
     markDirty();
   });
 }
+$('btn-preview-style').addEventListener('click', () => {
+  const file = { aurora: 'popup-preview.html', editorial: 'popup-editorial.html', neumorphism: 'popup-neumorphism.html' }[currentStyle()];
+  chrome.tabs.create({ url: chrome.runtime.getURL(file), active: true });
+});
 
 // ============ MCP 服务状态（1.2.0） ============
 function updateMcpCmd() {
