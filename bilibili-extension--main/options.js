@@ -195,9 +195,6 @@ async function load() {
     try { await saveSettings(cfg); } catch (e) { }
   }
   $('auto-cookie').checked = cfg.autoCookie;
-  const modeSwitch = $('ui-mode');
-  modeSwitch.checked = cfg.mode !== 'classic';
-  $('mode-label').textContent = modeSwitch.checked ? '预览版' : '经典版';
   $('def-dm').checked = cfg.defaultDanmaku;
   $('def-cm').checked = cfg.defaultComments;
   $('def-sub').checked = cfg.defaultSubtitle;
@@ -249,7 +246,6 @@ async function load() {
 // ---- Save settings ----
 async function save() {
   const settings = {
-    mode: $('ui-mode').checked ? 'preview' : 'classic',
     serviceEnabled: $('service-enabled').checked,
     servicePort: Math.min(65535, Math.max(1024, parseInt($('service-port').value) || 8765)),
     autoCookie: $('auto-cookie').checked,
@@ -340,12 +336,6 @@ $('btn-balance').addEventListener('click', fetchBalanceNow);
 $('btn-sound-test').addEventListener('click', playTestSound);
 $('btn-export').addEventListener('click', exportSettings);
 $('btn-import').addEventListener('click', importSettings);
-
-// 界面模式开关：即时更新标签文案（保存时才会真正切换 popup）
-$('ui-mode').addEventListener('change', () => {
-  $('mode-label').textContent = $('ui-mode').checked ? '预览版' : '经典版';
-  markDirty();
-});
 
 // ============ MCP 服务状态（1.2.0） ============
 function updateMcpCmd() {

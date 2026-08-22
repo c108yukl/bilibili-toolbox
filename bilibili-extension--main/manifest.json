@@ -19,7 +19,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "popup-preview.html",
     "default_title": "B站爬虫",
     "default_icon": {
       "16": "icons/icon16.png",

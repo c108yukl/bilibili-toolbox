@@ -1,6 +1,6 @@
 /* ============================================================
-   B站爬虫扩展 - 预览版弹窗逻辑（popup-preview）v2.0-preview
-   与经典版共用：utils.js 工具库 + background 消息协议（port 'scraper'）
+   B站爬虫扩展 - 弹窗逻辑（popup-preview，唯一 UI）
+   依赖：utils.js 工具库 + background 消息协议（port 'scraper'）
    视觉：Aurora Console —— App-Shell 常驻操作栏、阶段时间线、
    AI LIVE 徽章、批量实时解析、主题感知派生色
    ============================================================ */
@@ -773,17 +773,6 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   $('pv-btn-cancel').addEventListener('click', cancelTask);
   $('pv-btn-settings').addEventListener('click', (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); });
 
-  // 一键切回经典版（background 监听 storage 变化自动切换 popup）
-  $('pv-btn-classic').addEventListener('click', async () => {
-    try {
-      const s = await chrome.storage.local.get('settings');
-      const settings = s.settings || {};
-      settings.mode = 'classic';
-      await chrome.storage.local.set({ settings });
-      try { await chrome.storage.sync.set({ settings }); } catch (e) { }
-    } catch (e) { }
-    window.close();
-  });
   $('pv-btn-copy').addEventListener('click', (e) => copyText($('pv-bvid').value.trim(), e.currentTarget));
   $('pv-btn-cookie').addEventListener('click', async () => {
     $('pv-btn-cookie').disabled = true;
@@ -840,7 +829,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
 
   // 点击涟漪
   for (const id of ['pv-btn-start', 'pv-btn-copy', 'pv-btn-cookie', 'pv-btn-select-all',
-                    'pv-btn-settings', 'pv-btn-classic', 'pv-btn-clear-log', 'pv-btn-clear-dl',
+                    'pv-btn-settings', 'pv-btn-clear-log', 'pv-btn-clear-dl',
                     'pv-btn-cancel']) {
     const el = $(id);
     if (el) el.addEventListener('click', addRipple);

@@ -62,27 +62,12 @@ function notifyFloat(ok, message) {
 let devMode = false;
 function devLog(...args) { if (devMode) console.log('[dev]', ...args); }
 
-// ============ UI 模式切换（preview 预览版 / classic 经典版） ============
-// action.default_popup 是静态的，用 chrome.action.setPopup 按设置动态切换
-async function applyPopupMode() {
-  try {
-    const cfg = await getStoredSettings();
-    const mode = cfg.mode === 'classic' ? 'classic' : 'preview';
-    await chrome.action.setPopup({ popup: mode === 'classic' ? 'popup.html' : 'popup-preview.html' });
-    devLog('[模式] 当前 UI 模式:', mode);
-  } catch (e) { }
-}
-
-// 设置变更（options 保存 / 弹窗快速切换）→ 立即切换 popup 与 MCP 服务
+// 设置变更（options 保存）→ 重连 MCP 服务（popup 由 manifest default_popup 静态指定）
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) {
-    applyPopupMode();
     mcpConnect();
   }
 });
-
-// 浏览器启动 / 扩展加载时同步一次（保证 popup 与设置一致）
-applyPopupMode();
 
 // ============ MCP 服务桥接（1.2.0） ============
 // 架构：AI 客户端(MCP) → 本地 mcp_server.py(HTTP/SSE, 自定义端口) → WebSocket → 本扩展执行

@@ -37,23 +37,22 @@
 ## 文件结构
 
 ```
-background.js  核心引擎（调API、WBI签名、分页、批量、AI、生成文件、UI模式切换）[ES Module SW]
+background.js  核心引擎（调API、WBI签名、分页、批量、AI、生成文件、MCP 桥接）[ES Module SW]
 content.js     悬浮球（拖拽、快捷菜单、Toast 反馈）[classic script]
-popup.html/js  弹窗界面·经典版（任务卡片、功能chip、折叠高级参数）[ES Module]
-popup-preview.html/js 弹窗界面·预览版 v2「Aurora Console」（App-Shell 常驻操作栏、阶段时间线 HUD、AI LIVE 徽章+计时、批量实时解析、文件徽章列表）[ES Module]
-options.html/js 设置页（默认项 + AI 配置 + 主题 + 界面模式切换 + 备份）[ES Module]
+popup-preview.html/js 弹窗界面「Aurora Console」（App-Shell 常驻操作栏、阶段时间线 HUD、AI LIVE 徽章+计时、批量实时解析、文件徽章列表）[ES Module]
+options.html/js 设置页（默认项 + AI 配置 + 主题 + 服务 + 备份）[ES Module]
 utils.js       共享工具库（MD5、WBI、格式转换、热词分词、AI 调用、主题、默认设置）[ES Module]
-styles/shared.css  共享样式层（经典版组件）
-styles/preview.css 预览版样式（玻璃拟态 2.0：主题感知 color-mix 派生色、极光纱幕、鼠标聚光灯）
+styles/shared.css  共享样式层（设置页组件）
+styles/preview.css 弹窗样式（玻璃拟态 2.0：主题感知 color-mix 派生色、极光纱幕、鼠标聚光灯）
 icons/         扩展图标
 ```
 
 > **架构（v1.2.0）**：background / popup / options 统一为 ES Module，共享能力集中在 `utils.js`
 > 通过显式 `import` 引用（manifest 声明 `"type": "module"`），消除全局变量隐式依赖；
-> content.js 因内容脚本限制保持 classic script 自包含；`styles/` 提供共享样式层
-> （经典版 `shared.css`）与预览版玻璃拟态设计语言（`preview.css`）。
+> content.js 因内容脚本限制保持 classic script 自包含；设置页使用 `shared.css`，
+> 弹窗使用 `preview.css` 玻璃拟态设计语言。
 >
-> **双 UI 模式**：经典版（任务卡片 + 功能 chip + 折叠高级参数）与**预览版 v2「Aurora Console」**
+> **弹窗 UI「Aurora Console」**
 > （`popup-preview`，App-Shell 固定视口布局——头/底栏常驻、主区滚动，开始按钮永不滚走；
 > 运行时底栏变身**进度 HUD**：`视频→弹幕→字幕→评论→AI` 阶段时间线实时解析进度消息、
 > 当前阶段脉冲高亮、完成阶段打勾；AI 面板三态 **LIVE 徽章**（排队中/生成中·计时/✓完成·总时长），
@@ -61,7 +60,6 @@ icons/         扩展图标
 > 文件列表带格式徽章（JSON/CSV/TXT/SRT/ASS/LRC）与大小；UP 主信息卡片化（粉丝/投稿统计）；
 > 词云按排名主题渐变依次弹入；全站强调色经 `color-mix()` 从主题派生（糖果/落日等主题不再残留默认青色）；
 > 深空极光纱幕 + 流动光晕 + 鼠标聚光灯 + 完成彩带庆祝 + 按钮音效）
-> **一键自由切换**——弹窗头部 ✨/🎨 按钮即时切换，或设置页「🧪 界面模式」选择（默认预览版）；
 > 动效全部走 transform/opacity（GPU 合成）并尊重系统"减弱动态效果"设置。
 >
 > **评论进度计算**：全链路阶段进度模型（视频3% → 弹幕8-26% → 字幕28-38% →

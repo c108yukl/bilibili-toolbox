@@ -257,7 +257,6 @@ export function applyTheme(theme) {
 
 // ============ 默认设置（全量，所有上下文共用；安装/设置页打开时补齐写入 storage） ============
 export const DEFAULTS = {
-  mode: 'preview',            // UI 模式：preview=预览版（玻璃拟态）/ classic=经典版
   serviceEnabled: false,      // MCP 服务开关：允许 AI 客户端经本地桥接调用扩展
   servicePort: 8765,          // MCP 本地桥接端口（需与 python mcp_server.py --port 一致）
   autoCookie: false,          // 自动从浏览器读取B站Cookie
