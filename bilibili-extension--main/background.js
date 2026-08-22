@@ -1533,7 +1533,7 @@ chrome.runtime.onInstalled.addListener(async () => {
       } catch (e) { }
     }
   } catch (e) { }
-  await applyPopupMode();
+  await applyPopupStyle();
   chrome.contextMenus.removeAll();
   chrome.contextMenus.create({
     id: 'scrape-bilibili-dm',
