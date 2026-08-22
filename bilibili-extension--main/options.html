@@ -482,10 +482,32 @@
         <div class="card">
           <h2>📖 使用说明</h2>
           <div class="hint" style="font-size:12.5px;line-height:2">
-            1️⃣ 在本仓库根目录启动本地桥接：<code style="color:var(--accent)">python mcp_server.py --port <b>8765</b></code>（端口与上方设置一致）<br>
-            2️⃣ 打开本页 → 启用 MCP 服务 → 点「保存设置」，状态点变绿即已连接<br>
-            3️⃣ 在 AI 客户端配置 MCP 服务器地址：<code style="color:var(--accent)">http://127.0.0.1:8765/mcp</code><br>
-            4️⃣ AI 即可调用：<b>get_video_info / fetch_danmaku / fetch_comments / fetch_subtitle / word_cloud / get_cookie_status</b>（Cookie 自动从浏览器读取，弹幕自动走 seg.so 全量接口）
+            <b style="color:var(--text)">工作原理</b>：AI 客户端（Claude / Cursor / DSH 等）—HTTP→
+            <code>mcp_server.py</code>（本机桥接）—WebSocket→ 浏览器扩展执行抓取。
+            Cookie 由扩展自动从浏览器读取，登录态下弹幕自动走 seg.so 全量接口。<br><br>
+            <b style="color:var(--text)">快速开始</b><br>
+            1️⃣ <b>安装依赖</b>（仅首次）：在仓库根目录执行 <code style="color:var(--accent)">pip install aiohttp</code><br>
+            2️⃣ <b>启动桥接服务</b>：<code style="color:var(--accent)">python mcp_server.py --port 8765</code>
+            （端口与上方设置一致，可点上方「📋 复制启动命令」）<br>
+            3️⃣ 打开本页 → 启用 MCP 服务 → 点「保存设置」，<b>状态点变绿即已连接</b>
+            （扩展每 4 秒自动重连，服务后启动也无需刷新本页）<br>
+            4️⃣ <b>配置 AI 客户端</b>：MCP 服务器地址填
+            <code style="color:var(--accent)">http://127.0.0.1:8765/mcp</code>（支持 Streamable HTTP 与旧式 SSE），可参考：<br>
+            <span style="font-family:'Consolas',monospace;font-size:12px;background:rgba(0,0,0,.3);padding:8px 10px;border-radius:8px;display:block;margin:6px 0;white-space:pre-wrap;user-select:all">{ "mcpServers": { "bilibili-toolbox": { "url": "http://127.0.0.1:8765/mcp" } } }</span>
+            5️⃣ AI 即可调用 6 个工具：<br>
+            <span style="display:inline-block;margin-left:1em;line-height:1.9">
+              · <code>get_video_info</code> — 视频概览：标题 / UP主 / 时长 / 播放量 / 弹幕数 / 评论数<br>
+              · <code>fetch_danmaku</code> — 全量弹幕（登录态自动 seg.so 分段，与 list.so 对比取更全）<br>
+              · <code>fetch_comments</code> — 评论 + 楼中楼（可限翻页数 / 条数 / 翻页间隔）<br>
+              · <code>fetch_subtitle</code> — 字幕（SRT 文本 + 结构化行，无字幕返回 found=false）<br>
+              · <code>word_cloud</code> — 弹幕热词统计（中文二元组 + 拉丁词，停用词过滤）<br>
+              · <code>get_cookie_status</code> — 查询 B 站登录状态（判断数据完整度）
+            </span><br>
+            <b style="color:var(--text)">常见问题</b><br>
+            · 状态点一直不绿？依次检查：终端是否在跑 mcp_server.py（应有 [MCP] 日志）→ 启动命令 <b>--port</b> 是否与上方端口一致 → 是否点了「保存设置」<br>
+            · AI 调用报「浏览器扩展未连接」？调用期间需保持本浏览器开启、且本页开关处于启用状态<br>
+            · 抓到的数据偏少？让 AI 先调 <code>get_cookie_status</code> 确认 B 站已登录（未登录时弹幕走 list.so，数量会明显变少）<br>
+            · 安全提示：服务默认只监听本机 127.0.0.1；除非清楚风险，不要加 <code>--host 0.0.0.0</code> 暴露到局域网
           </div>
         </div>
       </section>
