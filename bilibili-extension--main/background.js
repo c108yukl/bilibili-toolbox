@@ -1358,6 +1358,8 @@ chrome.runtime.onConnect.addListener((port) => {
       notifyFloat(false, '⛔ 任务已取消');
       try { port.postMessage({ type: 'abort', message: '已取消' }); } catch (e) { }
     } else if (msg.action === 'status') {
+      // 弹窗打开即唤醒 SW：顺带补一次 MCP 重连（防重连定时器随休眠丢失）
+      if (!mcpConnected) { getStoredSettings().then(c => { if (c.serviceEnabled) mcpConnect(); }).catch(() => {}); }
       try { port.postMessage({ type: 'status', running, cancelled }); } catch (e) { }
     }
   });
@@ -1371,10 +1373,15 @@ chrome.runtime.onConnect.addListener((port) => {
 // ============ Runtime Message（content script 悬浮球等）============
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'mcpStatus') {
-    // 服务状态查询（设置页轮询）
+    // 服务状态查询（设置页轮询）。SW 休眠会杀死 4s 重连定时器，
+    // 故每次轮询发现"已启用但未连接"时主动补一次重连（唤醒即恢复）
     (async () => {
       let enabled = false;
-      try { enabled = !!(await getStoredSettings()).serviceEnabled; } catch (e) { }
+      try {
+        const cfg = await getStoredSettings();
+        enabled = !!cfg.serviceEnabled;
+        if (enabled && !mcpConnected) mcpConnect();
+      } catch (e) { }
       try {
         sendResponse({ enabled, connected: mcpConnected, url: mcpWs ? mcpWs.url : null, session: mcpSession });
       } catch (e) { }
