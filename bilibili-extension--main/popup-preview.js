@@ -730,6 +730,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   }
 
   // ── 直播面板 ──
+  const LIVE_SUPPORTED = false;   // B站风控升级（-352），实时弹幕暂停支持——见 docs/live-danmu-notes.md
   let liveOn = false;
   let liveRoomCur = null;
   function setLiveUI(on, err) {
@@ -764,6 +765,8 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     if (!sec) return;
     sec.style.display = '';
     liveRoomCur = roomId;
+    const actions = sec.querySelector('.pv-live-actions');
+    if (!LIVE_SUPPORTED && actions) actions.style.display = 'none';   // 暂停支持：隐藏监听按钮
     try {
       const r = await chrome.runtime.sendMessage({ action: 'getLiveInfo', roomId });
       if (r && r.ok) {
@@ -778,12 +781,8 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
         liveRoomCur = r.roomId || roomId;
       }
     } catch (e) { }
-    // popup 重开时恢复监听状态（SW 在后台持续收集）
-    try {
-      const st = await chrome.runtime.sendMessage({ action: 'liveStatus' });
-      if (st && st.connected) { setLiveUI(true); appendLiveLines([], st.count); }
-      else setLiveUI(false);
-    } catch (e) { setLiveUI(false); }
+    const cnt = $('pv-live-count');
+    if (cnt) cnt.textContent = LIVE_SUPPORTED ? '未开始监听' : 'ℹ️ 房间信息正常；实时弹幕监听暂未开放（风控升级，方案已归档）';
   }
 
   // ── 初始化 ──
