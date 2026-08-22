@@ -195,6 +195,10 @@ async function load() {
     try { await saveSettings(cfg); } catch (e) { }
   }
   $('auto-cookie').checked = cfg.autoCookie;
+  const style = ['aurora', 'editorial', 'neumorphism'].includes(cfg.uiStyle) ? cfg.uiStyle : 'aurora';
+  for (const el of document.querySelectorAll('.style-wrap')) {
+    el.classList.toggle('active', el.dataset.style === style);
+  }
   $('def-dm').checked = cfg.defaultDanmaku;
   $('def-cm').checked = cfg.defaultComments;
   $('def-sub').checked = cfg.defaultSubtitle;
@@ -246,6 +250,7 @@ async function load() {
 // ---- Save settings ----
 async function save() {
   const settings = {
+    uiStyle: (document.querySelector('.style-wrap.active') || {}).dataset?.style || 'aurora',
     serviceEnabled: $('service-enabled').checked,
     servicePort: Math.min(65535, Math.max(1024, parseInt($('service-port').value) || 8765)),
     autoCookie: $('auto-cookie').checked,
@@ -336,6 +341,15 @@ $('btn-balance').addEventListener('click', fetchBalanceNow);
 $('btn-sound-test').addEventListener('click', playTestSound);
 $('btn-export').addEventListener('click', exportSettings);
 $('btn-import').addEventListener('click', importSettings);
+
+// 界面风格选择：切换高亮（保存后经 background setPopup 生效）
+for (const el of document.querySelectorAll('.style-wrap')) {
+  el.addEventListener('click', () => {
+    for (const other of document.querySelectorAll('.style-wrap')) other.classList.remove('active');
+    el.classList.add('active');
+    markDirty();
+  });
+}
 
 // ============ MCP 服务状态（1.2.0） ============
 function updateMcpCmd() {

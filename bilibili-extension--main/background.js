@@ -62,12 +62,32 @@ function notifyFloat(ok, message) {
 let devMode = false;
 function devLog(...args) { if (devMode) console.log('[dev]', ...args); }
 
-// 设置变更（options 保存）→ 重连 MCP 服务（popup 由 manifest default_popup 静态指定）
+// ============ UI 风格切换（aurora / editorial / neumorphism） ============
+// action.default_popup 是静态的，用 chrome.action.setPopup 按设置动态切换
+const STYLE_POPUPS = {
+  aurora: 'popup-preview.html',
+  editorial: 'popup-editorial.html',
+  neumorphism: 'popup-neumorphism.html',
+};
+async function applyPopupStyle() {
+  try {
+    const cfg = await getStoredSettings();
+    const popup = STYLE_POPUPS[cfg.uiStyle] || STYLE_POPUPS.aurora;
+    await chrome.action.setPopup({ popup });
+    devLog('[风格] 当前 UI 风格:', cfg.uiStyle || 'aurora');
+  } catch (e) { }
+}
+
+// 设置变更（options 保存）→ 立即切换 popup 风格与 MCP 服务
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) {
+    applyPopupStyle();
     mcpConnect();
   }
 });
+
+// 浏览器启动 / 扩展加载时同步一次（保证 popup 与设置一致）
+applyPopupStyle();
 
 // ============ MCP 服务桥接（1.2.0） ============
 // 架构：AI 客户端(MCP) → 本地 mcp_server.py(HTTP/SSE, 自定义端口) → WebSocket → 本扩展执行

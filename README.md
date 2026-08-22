@@ -16,7 +16,7 @@
 │   └── webapp.py        #   Streamlit 实现（包内）
 ├── cli.py               # 命令行入口（薄壳，兼容 python cli.py）
 ├── app.py               # Streamlit 网页版入口（薄壳，streamlit run app.py）
-├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.2.0, ES Module，Aurora Console UI + MCP 服务)
+├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.2.0, ES Module，三种界面风格 + MCP 服务)
 ├── mcp_server.py              # MCP 本地桥接服务（自定义端口，AI 调用扩展 + 自动 Cookie）
 ├── tests/               # pytest 测试（139 个，全部离线可跑）
 └── bak/                 # 旧版本备份（保留，已忽略）
@@ -91,7 +91,7 @@ print(result["content"])                        # 流式：on_chunk 回调
 3. 在 B 站视频页点击扩展图标 → 自动识别 BV 号 → 选择任务 → 开始爬取
 4. 也可在视频链接上**右键**直接抓取，或使用页面右下角的**悬浮球**快捷抓取
 
-**弹窗 UI「Aurora Console」**：玻璃拟态 + 流动光晕 + App-Shell 常驻操作栏 + 阶段时间线 HUD + 弹性微交互 + 完成彩带庆祝。
+**三种界面风格**：设置页「外观 → 界面风格」可切换弹窗皮肤——**Aurora Console**（默认，深空玻璃拟态 + 阶段时间线 HUD + 极光纱幕）、**Editorial**（编辑杂志风：米白单色、衬线标题、细线排版）、**Neumorphism**（新拟物派：双光源阴影、凸起/凹陷交互）。三套皮肤共用同一逻辑，保存后下次打开弹窗生效。
 
 **🔌 MCP 服务（AI 调用扩展）**：设置页「服务」标签启用后，运行本地桥接：
 

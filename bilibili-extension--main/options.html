@@ -77,6 +77,20 @@
     .swatch { width: 40px; height: 40px; border-radius: 50%; box-shadow: 0 4px 12px rgba(0,0,0,.4); transition: transform .15s; }
     .swatch-wrap:hover .swatch { transform: scale(1.12); }
 
+    /* 界面风格选择 */
+    .style-wrap {
+      display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer;
+      padding: 8px 10px; border-radius: 10px; border: 2px solid transparent; transition: all .2s;
+    }
+    .style-wrap.active { border-color: var(--accent); background: rgba(255,255,255,.04); }
+    .style-wrap span { font-size: 11px; color: var(--text-dim); }
+    .style-chip { width: 46px; height: 34px; border-radius: 9px; transition: transform .15s; }
+    .style-wrap:hover .style-chip { transform: scale(1.08); }
+    .style-chip-aurora { background: linear-gradient(135deg, #00c8ff, #7c5cff); box-shadow: 0 3px 10px rgba(0,200,255,.35); }
+    .style-chip-editorial { background: #F9F8F6; display: flex; align-items: center; justify-content: center;
+      font: 700 15px Georgia, serif; color: #1C1C1C; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
+    .style-chip-neu { background: #e0e5ec; box-shadow: 3px 3px 7px #b8bcc2, -3px -3px 7px #ffffff; }
+
     /* 隐私声明确认弹窗 */
     .modal-overlay {
       position: fixed; inset: 0; background: rgba(0,0,0,.62); z-index: 100;
@@ -167,6 +181,24 @@
     <main class="content">
       <!-- ===== 外观 ===== -->
       <section class="tab-page active" data-tab="appearance">
+        <div class="card">
+          <h2>🧪 界面风格</h2>
+          <div class="row" style="justify-content:flex-start;gap:12px">
+            <div class="style-wrap" data-style="aurora" title="深空玻璃拟态 · 阶段时间线 · 极光纱幕">
+              <div class="style-chip style-chip-aurora"></div>
+              <span>极光玻璃</span>
+            </div>
+            <div class="style-wrap" data-style="editorial" title="编辑杂志风 · 衬线标题 · 细线排版">
+              <div class="style-chip style-chip-editorial">Aa</div>
+              <span>编辑杂志</span>
+            </div>
+            <div class="style-wrap" data-style="neumorphism" title="新拟物派 · 柔和立体 · 双光源阴影">
+              <div class="style-chip style-chip-neu"></div>
+              <span>新拟物</span>
+            </div>
+          </div>
+          <div class="hint" style="margin-top:8px">弹窗的整体设计风格（Aurora Console / Editorial / Neumorphism），保存后下次打开弹窗生效</div>
+        </div>
         <div class="card">
           <h2>🎨 主题色</h2>
           <div class="row">

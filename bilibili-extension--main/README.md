@@ -37,30 +37,34 @@
 ## 文件结构
 
 ```
-background.js  核心引擎（调API、WBI签名、分页、批量、AI、生成文件、MCP 桥接）[ES Module SW]
+background.js  核心引擎（调API、WBI签名、分页、批量、AI、生成文件、MCP 桥接、UI 风格切换）[ES Module SW]
 content.js     悬浮球（拖拽、快捷菜单、Toast 反馈）[classic script]
-popup-preview.html/js 弹窗界面「Aurora Console」（App-Shell 常驻操作栏、阶段时间线 HUD、AI LIVE 徽章+计时、批量实时解析、文件徽章列表）[ES Module]
-options.html/js 设置页（默认项 + AI 配置 + 主题 + 服务 + 备份）[ES Module]
+popup-preview.html/js 弹窗界面·默认「Aurora Console」（App-Shell 常驻操作栏、阶段时间线 HUD、AI LIVE 徽章+计时、批量实时解析、文件徽章列表）[ES Module]
+popup-editorial.html  弹窗界面·「Editorial」编辑杂志风皮肤（衬线标题、细线排版、单色印刷块）——复用 popup-preview.js
+popup-neumorphism.html 弹窗界面·「Neumorphism」新拟物皮肤（双光源阴影、凸起/凹陷交互、柔和圆角）——复用 popup-preview.js
+options.html/js 设置页（默认项 + AI 配置 + 主题 + 界面风格 + 服务 + 备份）[ES Module]
 utils.js       共享工具库（MD5、WBI、格式转换、热词分词、AI 调用、主题、默认设置）[ES Module]
-styles/shared.css  共享样式层（设置页组件）
-styles/preview.css 弹窗样式（玻璃拟态 2.0：主题感知 color-mix 派生色、极光纱幕、鼠标聚光灯）
+styles/shared.css      共享样式层（设置页组件）
+styles/preview.css     Aurora Console 样式（玻璃拟态 2.0：主题感知 color-mix 派生色、极光纱幕、鼠标聚光灯）
+styles/editorial.css   Editorial 样式（编辑杂志风：衬线、细线、单色）
+styles/neumorphism.css Neumorphism 样式（Soft UI：双光源阴影系统）
 icons/         扩展图标
 ```
 
 > **架构（v1.2.0）**：background / popup / options 统一为 ES Module，共享能力集中在 `utils.js`
 > 通过显式 `import` 引用（manifest 声明 `"type": "module"`），消除全局变量隐式依赖；
-> content.js 因内容脚本限制保持 classic script 自包含；设置页使用 `shared.css`，
-> 弹窗使用 `preview.css` 玻璃拟态设计语言。
+> content.js 因内容脚本限制保持 classic script 自包含。
 >
-> **弹窗 UI「Aurora Console」**
-> （`popup-preview`，App-Shell 固定视口布局——头/底栏常驻、主区滚动，开始按钮永不滚走；
-> 运行时底栏变身**进度 HUD**：`视频→弹幕→字幕→评论→AI` 阶段时间线实时解析进度消息、
-> 当前阶段脉冲高亮、完成阶段打勾；AI 面板三态 **LIVE 徽章**（排队中/生成中·计时/✓完成·总时长），
-> 任务启动即显示排队骨架；**批量实时解析**（识别计数 + chip 预览，点 × 移除）；
-> 文件列表带格式徽章（JSON/CSV/TXT/SRT/ASS/LRC）与大小；UP 主信息卡片化（粉丝/投稿统计）；
-> 词云按排名主题渐变依次弹入；全站强调色经 `color-mix()` 从主题派生（糖果/落日等主题不再残留默认青色）；
-> 深空极光纱幕 + 流动光晕 + 鼠标聚光灯 + 完成彩带庆祝 + 按钮音效）
-> 动效全部走 transform/opacity（GPU 合成）并尊重系统"减弱动态效果"设置。
+> **三种界面风格（设置页「外观 → 界面风格」切换，保存后下次打开弹窗生效）**：
+> 三套皮肤共用同一套元素 ID 与 `popup-preview.js` 逻辑（批量、进度 HUD、AI 并发 LIVE 徽章、
+> 文件下载全部一致），仅样式层不同——
+> **Aurora Console**（默认，`preview.css`，深空玻璃拟态：App-Shell 常驻操作栏、
+> 阶段时间线 HUD、极光纱幕、鼠标聚光灯、完成彩带）；
+> **Editorial**（`editorial.css`，编辑杂志风：米白底+柔和黑单色、衬线标题与斜体章节号、
+> 细线分隔、选中任务反白印刷块、完成阶段删除线——参考 stylekit.top/zh/styles/editorial）；
+> **Neumorphism**（`neumorphism.css`，新拟物派：浅灰同色系表面、双光源阴影
+> （左上高光/右下暗影）、hover 缩影遮光、active 转内凹、12–24px 柔和圆角——
+> 参考 stylekit.top/zh/styles/neumorphism）。
 >
 > **评论进度计算**：全链路阶段进度模型（视频3% → 弹幕8-26% → 字幕28-38% →
 > 评论40-92% → AI 93-99%），评论阶段按 known_total/页数实时估算，进度条实时推进；
