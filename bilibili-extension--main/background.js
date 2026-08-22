@@ -27,6 +27,7 @@ import {
   parseTimeWindow,
   syncServerTime,
 } from './utils.js';
+import { liveConnect, LIVE_DEFAULT_WS } from './live-proto.js';
 
 // 启动时校准服务器时间（用于 WBI wts）
 syncServerTime();
@@ -63,75 +64,29 @@ let devMode = false;
 function devLog(...args) { if (devMode) console.log('[dev]', ...args); }
 
 // ============ 直播弹幕监听（live.bilibili.com） ============
-// 协议：B站直播 WS sub 协议 —— 16 字节帧头（包长/头长/版本/操作码/序号）
-// AUTH(7) → AUTH_REPLY(8)，HEARTBEAT(2) 每 30s，MESSAGE(5) 推送（ver2=zlib 压缩）
-let liveWs = null;
-let liveHbTimer = null;
+// 协议实现见 live-proto.js（background / live-test 诊断页 / Node 测试共用）
+let liveHandle = null;        // liveConnect 返回 {authed, ws, stop}
 let liveRoomId = null;
-let liveLines = [];          // 环形缓冲：全部已收弹幕（导出用）
+let liveLines = [];           // 全部已收弹幕（导出用，上限 2 万）
 let liveConnected = false;
-const LIVE_WS_URL = 'wss://broadcastlv.chat.bilibili.com/sub';
 const LIVE_MAX_LINES = 20000;
-
-function livePack(op, body) {
-  const data = new TextEncoder().encode(JSON.stringify(body || {}));
-  const buf = new ArrayBuffer(16 + data.length);
-  const dv = new DataView(buf);
-  dv.setUint32(0, 16 + data.length);
-  dv.setUint16(4, 16);
-  dv.setUint16(6, 1);        // protover 1（控制帧明文）
-  dv.setUint32(8, op);
-  dv.setUint32(12, 1);
-  new Uint8Array(buf, 16).set(data);
-  return buf;
-}
-
-async function liveInflate(u8) {
-  const ds = new DecompressionStream('deflate');   // zlib 流
-  const stream = new Blob([u8]).stream().pipeThrough(ds);
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
 
 function liveBroadcast(payload) {
   try { chrome.runtime.sendMessage(payload, () => void chrome.runtime.lastError); } catch (e) { }
 }
 
-async function liveHandleData(u8) {
-  // 解析一帧 MESSAGE 数据：JSON 单条或解压后再切帧
-  let text = null;
-  try { text = new TextDecoder().decode(u8); JSON.parse(text); }
-  catch (e) { text = null; }
-  if (text) { await liveHandleJSON(JSON.parse(text)); return; }
-  try {
-    const raw = await liveInflate(u8);
-    let off = 0;
-    while (off + 16 <= raw.length) {
-      const dv = new DataView(raw.buffer, raw.byteOffset + off);
-      const len = dv.getUint32(0);
-      if (off + len > raw.length) break;
-      const body = raw.slice(off + 16, off + len);
-      await liveHandleData(body);   // 解压后的子帧
-      off += len;
-    }
-  } catch (e) { devLog('[live] 解压失败', e && e.message); }
-}
-
-async function liveHandleJSON(obj) {
-  if (!obj || !obj.cmd) return;
-  if (obj.cmd === 'DANMU_MSG') {
-    const info = obj.info || [];
-    const line = {
-      ts: Date.now(),
-      user: (info[2] && info[2][1]) || '',
-      text: info[1] || '',
-    };
-    if (line.text) {
-      liveLines.push(line);
-      if (liveLines.length > LIVE_MAX_LINES) liveLines.splice(0, liveLines.length - LIVE_MAX_LINES);
-      liveBroadcast({ action: 'liveDanmaku', lines: [line], count: liveLines.length });
-    }
-  }
-  // 其他 cmd（礼物/进场/SC 等）暂不处理，保持轻量
+// 弹幕服务器信息：新端点 index/getDanmuInfo（旧 getInfoByRoom 已 404）
+// 带 Cookie + buvid3 过 -352 风控；失败则降级为匿名空 token 直连
+async function fetchDanmuInfo(roomId, cookieStr, buvid) {
+  const data = await biliFetchJSON(
+    `https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id=${roomId}&type=0`
+    + `&buvid3=${encodeURIComponent(buvid)}`,
+    { cookie: cookieStr }
+  );
+  return {
+    token: data.token || '',
+    host: (data.host_list || [])[0] || {},
+  };
 }
 
 async function liveStart(roomId) {
@@ -140,73 +95,44 @@ async function liveStart(roomId) {
   const cookies = await getBiliCookies();
   const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
   const uid = parseInt((cookies.find(c => c.name === 'DedeUserID') || {}).value || '0', 10) || 0;
-  const buvid = encodeURIComponent((cookies.find(c => c.name === 'buvid3') || {}).value || '');
-  // 弹幕服务器地址 + token（buvid3 防风控 -352）
-  const danmu = await biliFetchJSON(
-    `https://api.live.bilibili.com/xlive/web-room/v1/danmu/getInfoByRoom?room_id=${roomId}&buvid3=${buvid}`,
-    { cookie: cookieStr }
-  );
-  const token = danmu.token || (danmu.data && danmu.data.token) || '';
-  const host = ((danmu.host_list || (danmu.data && danmu.data.host_list) || [{}])[0]);
-  const wsUrl = host.host ? `wss://${host.host}:${host.wss_port || 443}/sub` : LIVE_WS_URL;
+  const buvid = (cookies.find(c => c.name === 'buvid3') || {}).value || '';
+
+  let token = '';
+  let wsUrl = LIVE_DEFAULT_WS;
+  try {
+    const info = await fetchDanmuInfo(roomId, cookieStr, buvid);
+    token = info.token;
+    if (info.host.host) wsUrl = `wss://${info.host.host}:${info.host.wss_port || 443}/sub`;
+  } catch (e) {
+    devLog('[live] getDanmuInfo 失败，降级匿名直连:', e && e.message);
+  }
+
   liveRoomId = roomId;
   liveLines = [];
-  return new Promise((resolve, reject) => {
-    try { liveWs = new WebSocket(wsUrl); }
-    catch (e) { reject(new Error('无法连接弹幕服务器')); return; }
-    liveWs.binaryType = 'arraybuffer';
-    const authTimer = setTimeout(() => {
-      reject(new Error('弹幕服务器认证超时'));
-      liveStop();
-    }, 10000);
-    liveWs.onopen = () => {
-      liveWs.send(livePack(7, {   // AUTH
-        uid, roomid: roomId, protover: 2, platform: 'web', type: 2, key: token,
-      }));
-      liveHbTimer = setInterval(() => {
-        try { if (liveWs && liveWs.readyState === WebSocket.OPEN) liveWs.send(livePack(2)); }
-        catch (e) { }
-      }, 30000);
-    };
-    liveWs.onmessage = async (ev) => {
-      const dv = new DataView(ev.data);
-      const op = dv.getUint32(8);
-      const body = new Uint8Array(ev.data.slice(16));
-      if (op === 8) {          // AUTH_REPLY
-        clearTimeout(authTimer);
-        let code = -1;
-        try { code = (JSON.parse(new TextDecoder().decode(body)) || {}).code; } catch (e) { }
-        if (code === 0) {
-          liveConnected = true;
-          liveBroadcast({ action: 'liveState', on: true, roomId });
-          resolve();
-        } else {
-          reject(new Error('弹幕服务器认证失败(code ' + code + ')'));
-          liveStop();
-        }
-      } else if (op === 5) {   // MESSAGE
-        await liveHandleData(body);
+  liveHandle = liveConnect({
+    wsUrl,
+    auth: { uid, roomid: roomId, protover: 2, platform: 'web', type: 2, key: token, buvid3: buvid },
+    onLog: (m) => devLog('[live]', m),
+    onDanmaku: (line) => {
+      liveLines.push(line);
+      if (liveLines.length > LIVE_MAX_LINES) liveLines.splice(0, liveLines.length - LIVE_MAX_LINES);
+      liveBroadcast({ action: 'liveDanmaku', lines: [line], count: liveLines.length });
+    },
+    onState: (state, detail) => {
+      if (state === 'authed') {
+        liveConnected = true;
+        liveBroadcast({ action: 'liveState', on: true, roomId });
+      } else if (state === 'closed' || state === 'error') {
+        if (liveConnected) liveBroadcast({ action: 'liveState', on: false, reason: detail });
+        liveConnected = false;
       }
-    };
-    liveWs.onclose = () => {
-      const was = liveConnected;
-      liveConnected = false;
-      clearInterval(liveHbTimer);
-      if (was) liveBroadcast({ action: 'liveState', on: false });
-    };
-    liveWs.onerror = () => {
-      clearTimeout(authTimer);
-      if (!liveConnected) { reject(new Error('弹幕服务器连接失败')); }
-      liveStop();
-    };
+    },
   });
+  await liveHandle.authed;    // 认证失败会 reject 并抛给调用方
 }
 
 function liveStop() {
-  clearInterval(liveHbTimer);
-  liveHbTimer = null;
-  try { if (liveWs) { liveWs.onclose = null; liveWs.close(); } } catch (e) { }
-  liveWs = null;
+  if (liveHandle) { try { liveHandle.stop(); } catch (e) { } liveHandle = null; }
   if (liveConnected) liveBroadcast({ action: 'liveState', on: false });
   liveConnected = false;
   liveRoomId = null;
@@ -391,6 +317,20 @@ async function executeMcpTool(tool, args, cookieStr) {
       const roomId = parseInt(args.room_id || args.bvid, 10);
       if (!roomId) throw new Error('room_id 无效');
       return await fetchLiveInfo(roomId);
+    }
+    case 'get_live_danmu_info': {
+      const roomId = parseInt(args.room_id, 10);
+      if (!roomId) throw new Error('room_id 无效');
+      const cookies = await getBiliCookies();
+      const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+      const buvid = (cookies.find(c => c.name === 'buvid3') || {}).value || '';
+      const info = await fetchDanmuInfo(roomId, cookieStr, buvid);
+      return {
+        room_id: roomId,
+        token_len: info.token.length,
+        host: info.host.host || '',
+        wss_port: info.host.wss_port || 443,
+      };
     }
     default:
       throw new Error(`未知工具: ${tool}`);

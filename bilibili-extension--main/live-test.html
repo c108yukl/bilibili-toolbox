@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>直播弹幕 · 连接诊断</title>
+  <style>
+    :root { --bg: #0b0e1a; --card: #141a2e; --line: #232c4a; --text: #e6e9f5; --dim: #8b93b5; --ok: #4caf50; --err: #f44336; --warn: #ff9800; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font: 14px/1.7 -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); padding: 28px; max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    .sub { color: var(--dim); font-size: 12px; margin-bottom: 18px; }
+    .row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    input { background: var(--card); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 9px 12px; font-size: 14px; width: 200px; }
+    button { background: linear-gradient(135deg, #00c8ff, #7c5cff); color: #fff; border: none; border-radius: 8px; padding: 9px 20px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    button.ghost { background: transparent; border: 1px solid var(--line); font-weight: 400; }
+    #log { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font: 12.5px/1.9 Consolas, monospace; max-height: 420px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    #log .ok { color: var(--ok); }
+    #log .err { color: var(--err); }
+    #log .warn { color: var(--warn); }
+    #log .dim { color: var(--dim); }
+    #log .dm { color: #6db9ff; }
+    .hint { color: var(--dim); font-size: 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>🔴 直播弹幕 · 连接诊断</h1>
+  <div class="sub">逐步执行：取 Cookie → 拿弹幕服务器信息（getDanmuInfo）→ WS 连接 → 认证 → 收弹幕。哪一步红了他就是凶手。</div>
+  <div class="row">
+    <input type="number" id="room" value="30068664" aria-label="直播间号">
+    <button id="go">开始诊断</button>
+    <button id="stop" class="ghost" disabled>停止</button>
+  </div>
+  <div id="log"></div>
+  <div class="hint">此页面与扩展后台共用同一套协议模块（live-proto.js）。诊断通过 = 弹窗里的「开始监听弹幕」也一定能通。</div>
+
+  <script type="module">
+    import { liveConnect, LIVE_DEFAULT_WS } from './live-proto.js';
+    import { getBiliCookies } from './utils.js';
+
+    const logEl = document.getElementById('log');
+    const roomEl = document.getElementById('room');
+    const goBtn = document.getElementById('go');
+    const stopBtn = document.getElementById('stop');
+
+    function log(text, cls = '') {
+      const t = new Date().toTimeString().slice(0, 8);
+      const div = document.createElement('div');
+      div.className = cls;
+      div.textContent = `[${t}] ${text}`;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    let conn = null;
+    let dmCount = 0;
+    let stopTimer = null;
+
+    goBtn.addEventListener('click', async () => {
+      if (conn) return;
+      logEl.innerHTML = '';
+      dmCount = 0;
+      const roomId = parseInt(roomEl.value, 10);
+      if (!roomId) { log('直播间号无效', 'err'); return; }
+      goBtn.disabled = true; stopBtn.disabled = false;
+
+      try {
+        log(`① 读取浏览器 Cookie ...`);
+        const cookies = await getBiliCookies();
+        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        const names = cookies.map(c => c.name);
+        log(`   共 ${cookies.length} 项；SESSDATA=${names.includes('SESSDATA') ? '有' : '无(匿名)'}；buvid3=${names.includes('buvid3') ? '有' : '无'}`, names.includes('buvid3') ? 'ok' : 'warn');
+        const uid = parseInt((cookies.find(c => c.name === 'DedeUserID') || {}).value || '0', 10) || 0;
+        const buvid = (cookies.find(c => c.name === 'buvid3') || {}).value || '';
+
+        log(`② 获取弹幕服务器信息（index/getDanmuInfo, room=${roomId}）...`);
+        let token = '', wsUrl = LIVE_DEFAULT_WS;
+        try {
+          const resp = await fetch(
+            `https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id=${roomId}&type=0&buvid3=${encodeURIComponent(buvid)}`,
+            { credentials: 'include', headers: { Cookie: cookieStr } }
+          );
+          const j = await resp.json();
+          if (j.code !== 0) throw new Error(`code=${j.code} ${j.message || ''}`);
+          token = (j.data || {}).token || '';
+          const host = ((j.data || {}).host_list || [])[0] || {};
+          if (host.host) wsUrl = `wss://${host.host}:${host.wss_port || 443}/sub`;
+          log(`   ✓ token 长度 ${token.length}，服务器 ${host.host || '(默认)'}:${host.wss_port || 443}`, 'ok');
+        } catch (e) {
+          log(`   ✗ 失败：${e.message} → 降级匿名直连默认服务器`, 'err');
+        }
+
+        log(`③ 连接 ${wsUrl} ...`);
+        conn = liveConnect({
+          wsUrl,
+          auth: { uid, roomid: roomId, protover: 2, platform: 'web', type: 2, key: token, buvid3: buvid },
+          onLog: (m) => log('   ' + m, 'dim'),
+          onDanmaku: (l) => { dmCount++; if (dmCount <= 20 || dmCount % 10 === 0) log(`💬 [${dmCount}] ${l.user}: ${l.text}`, 'dm'); },
+          onState: (s, d) => {
+            if (s === 'authed') log(`④ 认证成功 🎉 开始接收弹幕（监听 60 秒）`, 'ok');
+            else if (s === 'closed') log(`连接关闭 ${d || ''}`, 'warn');
+            else if (s === 'error') log(`连接错误：${d || ''}`, 'err');
+          },
+        });
+        try {
+          await conn.authed;
+          stopTimer = setTimeout(() => finish(), 60000);
+        } catch (e) {
+          log(`④ 认证失败：${e.message}`, 'err');
+          log(`排查建议：token 为 0 → Cookie/buvid3 问题（-352）；认证超时 → 服务器拒绝，多为 token 过期或 uid 不匹配`, 'warn');
+          finish();
+        }
+      } catch (e) {
+        log('意外错误: ' + (e && e.message || e), 'err');
+        finish();
+      }
+    });
+
+    function finish() {
+      clearTimeout(stopTimer);
+      if (conn) { try { conn.stop(); } catch (e) { } conn = null; }
+      log(`—— 诊断结束：共收到 ${dmCount} 条弹幕 ${dmCount > 0 ? '✅ 链路完全正常' : '❌ 未收到弹幕'} ——`, dmCount > 0 ? 'ok' : 'err');
+      goBtn.disabled = false; stopBtn.disabled = true;
+    }
+    stopBtn.addEventListener('click', finish);
+  </script>
+</body>
+</html>

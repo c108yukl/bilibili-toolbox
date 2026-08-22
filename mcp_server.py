@@ -124,6 +124,17 @@ TOOLS = [
             "required": ["room_id"],
         },
     },
+    {
+        "name": "get_live_danmu_info",
+        "description": "诊断：获取直播弹幕服务器信息（token 长度与 wss 地址）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": {"type": "integer", "description": "直播间号"}
+            },
+            "required": ["room_id"],
+        },
+    },
 ]
 
 
