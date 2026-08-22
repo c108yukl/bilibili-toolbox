@@ -11,8 +11,6 @@
 
 import asyncio
 import logging
-import time
-from typing import Optional
 
 import aiohttp
 
@@ -72,11 +70,11 @@ class BiliClient:
 
     def __init__(
         self,
-        credential: Optional[CookieCredential] = None,
-        timeout: Optional[float] = None,
-        retries: Optional[int] = None,
-        user_agent: Optional[str] = None,
-        session: Optional[aiohttp.ClientSession] = None,
+        credential: CookieCredential | None = None,
+        timeout: float | None = None,
+        retries: int | None = None,
+        user_agent: str | None = None,
+        session: aiohttp.ClientSession | None = None,
     ):
         self.credential = credential
         self.timeout = timeout if timeout is not None else TIMEOUT
@@ -125,13 +123,13 @@ class BiliClient:
         self,
         url: str,
         *,
-        params: Optional[dict] = None,
+        params: dict | None = None,
         method: str = "GET",
         cookie: bool = True,
     ) -> aiohttp.ClientResponse:
         """发起请求并返回响应；网络错误自动重试（指数退避）"""
         full_url = url if not params else f"{url}?{wbi.build_query(params)}"
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         for attempt in range(self.retries + 1):
             session = self._session_get()
             headers = dict(session.headers)
@@ -157,7 +155,7 @@ class BiliClient:
     async def fetch_json(
         self,
         url: str,
-        params: Optional[dict] = None,
+        params: dict | None = None,
         *,
         method: str = "GET",
         wbi_sign: bool = False,
@@ -194,7 +192,7 @@ class BiliClient:
     async def fetch_raw(
         self,
         url: str,
-        params: Optional[dict] = None,
+        params: dict | None = None,
         *,
         method: str = "GET",
         cookie: bool = True,

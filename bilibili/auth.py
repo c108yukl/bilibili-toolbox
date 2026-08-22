@@ -6,14 +6,13 @@ parse_cookie 返回 CookieCredential（属性名与旧版 bilibili_api.Credentia
 """
 
 import logging
-from typing import Optional
 
 from bilibili.models import CookieCredential
 
 logger = logging.getLogger(__name__)
 
 
-def parse_cookie(cookie_str: Optional[str]) -> Optional[CookieCredential]:
+def parse_cookie(cookie_str: str | None) -> CookieCredential | None:
     """
     解析 Cookie 字符串为凭证对象
 

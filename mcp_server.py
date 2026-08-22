@@ -68,7 +68,10 @@ TOOLS = [
             "properties": {
                 "bvid": {"type": "string", "description": "BV号或完整B站链接"},
                 "max_pages": {"type": "integer", "description": "最大翻页数，0=不限"},
-                "max_comments": {"type": "integer", "description": "评论条数上限（滑动窗口），0=不限"},
+                "max_comments": {
+                    "type": "integer",
+                    "description": "评论条数上限（滑动窗口），0=不限",
+                },
                 "with_replies": {"type": "boolean", "description": "是否获取楼中楼回复"},
                 "rate_delay": {"type": "integer", "description": "翻页间隔毫秒，防风控（默认400）"},
             },
@@ -82,7 +85,10 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "bvid": {"type": "string", "description": "BV号或完整B站链接"},
-                "lan": {"type": "string", "description": "字幕语言代码（ai-zh/zh-Hans/zh-Hant/en/ja/ko），默认自动"},
+                "lan": {
+                    "type": "string",
+                    "description": "字幕语言代码（ai-zh/zh-Hans/zh-Hant/en/ja/ko），默认自动",
+                },
             },
             "required": ["bvid"],
         },
@@ -151,7 +157,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
             if mtype == "hello":
                 bridge.ext_ws = ws
                 bridge.session = data.get("session", "")
-                log.info("扩展已连接 session=%s version=%s", bridge.session, data.get("version", "?"))
+                log.info("扩展已连接 session=%s version=%s",
+                         bridge.session, data.get("version", "?"))
             elif mtype == "result":
                 fut = bridge.pending.pop(data.get("id"), None)
                 if fut is not None and not fut.done():
@@ -198,7 +205,9 @@ async def handle_rpc(body: dict):
         try:
             data = await bridge.call(name, args)
             return _rpc_ok(req_id, {
-                "content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False, indent=2)}],
+                "content": [
+                    {"type": "text", "text": json.dumps(data, ensure_ascii=False, indent=2)}
+                ],
                 "structuredContent": data,
                 "isError": False,
             })
@@ -255,7 +264,7 @@ async def sse_get(request: web.Request) -> web.StreamResponse:
         }
     )
     await resp.prepare(request)
-    await resp.write(f"event: endpoint\ndata: /mcp\n\n".encode())
+    await resp.write(b"event: endpoint\ndata: /mcp\n\n")
     try:
         while True:
             await resp.write(b": keepalive\n\n")
@@ -290,7 +299,10 @@ def build_app() -> web.Application:
 def main() -> None:
     parser = argparse.ArgumentParser(description="B站爬虫扩展 MCP 本地桥接服务")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
-    parser.add_argument("--port", type=int, default=8765, help="监听端口（默认 8765，需与扩展设置一致）")
+    parser.add_argument(
+        "--port", type=int, default=8765,
+        help="监听端口（默认 8765，需与扩展设置一致）"
+    )
     args = parser.parse_args()
 
     log.info("B站爬虫扩展 MCP 服务启动: http://%s:%s/mcp", args.host, args.port)

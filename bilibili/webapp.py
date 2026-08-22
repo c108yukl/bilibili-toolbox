@@ -84,7 +84,10 @@ def _render_sidebar():
             with_replies = st.checkbox("楼中楼回复")
             sub_lan = st.selectbox(
                 "字幕语言",
-                ["ai-zh (中文AI)", "zh-Hans (简体)", "zh-Hant (繁体)", "en (英语)", "ja (日语)", "ko (韩语)"],
+                [
+                    "ai-zh (中文AI)", "zh-Hans (简体)", "zh-Hant (繁体)",
+                    "en (英语)", "ja (日语)", "ko (韩语)",
+                ],
                 index=0,
             )
         save_fmt = st.selectbox("保存格式", ["txt", "json", "csv", "srt", "ass", "lrc"], index=0)

@@ -3,13 +3,12 @@
 import json
 
 import pytest
+from fake_client import FakeClient, view_handler
 
 from bilibili import config
 from bilibili.client import BiliAPIError
 from bilibili.models import CookieCredential
 from bilibili.subtitle import SUBTITLE_LAN_MAP, _match_lan, get_subtitle
-
-from fake_client import FakeClient, view_handler
 
 VIEW_URL = "https://api.bilibili.com/x/web-interface/view"
 PLAYER_URL = "https://api.bilibili.com/x/player/wbi/v2"
@@ -47,7 +46,10 @@ def _make_client(subtitles=None, view_subtitle=None, player_fail=None):
     if player_fail is not None:
         client.on_json(PLAYER_URL, player_fail)
     else:
-        client.on_json(PLAYER_URL, lambda params, ws, ck: {"subtitle": {"subtitles": subtitles or []}})
+        client.on_json(
+            PLAYER_URL,
+            lambda params, ws, ck: {"subtitle": {"subtitles": subtitles or []}},
+        )
     client.on_raw(SUB_URL, lambda params, ck: BODY_JSON)
     return client
 

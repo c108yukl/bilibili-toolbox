@@ -1,7 +1,6 @@
 """browser_cookie 浏览器 Cookie 提取测试"""
 
 import base64
-import ctypes
 import json
 import sqlite3
 import sys
@@ -173,7 +172,6 @@ class TestChromium:
     @pytest.mark.skipif(sys.platform != "win32", reason="仅 Windows")
     def test_prefers_newest_profile(self, tmp_path):
         import os
-        import time
 
         user_data = tmp_path / "User Data"
         d1 = user_data / "Default"

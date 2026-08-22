@@ -18,11 +18,10 @@
 
 import asyncio
 import logging
-from typing import List, Optional
 
 from bilibili.cache import cache_get, cache_key, cache_set
 from bilibili.client import BiliAPIError, BiliClient, BiliError
-from bilibili.config import MAX_COMMENTS, REPLY_DELAY, REPLY_PAGE_SIZE, RATE_DELAY
+from bilibili.config import MAX_COMMENTS, RATE_DELAY, REPLY_DELAY, REPLY_PAGE_SIZE
 from bilibili.formatters import save_comments
 from bilibili.models import CookieCredential
 
@@ -34,7 +33,7 @@ _REPLY_MAX_PAGES = 20  # 楼中楼翻页保护上限
 # ─── 单页获取 ─────────────────────────────────────────────
 
 async def _fetch_page_cursor(
-    client: BiliClient, aid: int, cursor: Optional[int], cookie: bool = True
+    client: BiliClient, aid: int, cursor: int | None, cookie: bool = True
 ) -> dict:
     """
     x/v2/reply/main cursor 接口；首次失败（风控）时重试一次 WBI 签名版
@@ -42,7 +41,7 @@ async def _fetch_page_cursor(
     Returns:
         原始响应 dict（含 replies/top_replies/cursor）
     """
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
     for attempt in range(2):
         params = {"type": 1, "oid": aid, "mode": 3}
         if cursor:
@@ -112,7 +111,7 @@ async def _build_entries(
     aid: int,
     raw_replies: list,
     with_replies: bool,
-    credential: Optional[CookieCredential],
+    credential: CookieCredential | None,
 ) -> list:
     """原始评论列表 → [{"comment": ..., "replies": [...]}]（含置顶合并与 rpid 去重）"""
     result: list = []
@@ -125,7 +124,9 @@ async def _build_entries(
         seen.add(rpid)
         entry = {"comment": c, "replies": []}
         if with_replies and c.get("rcount", 0) > 0:
-            entry["replies"] = await _fetch_all_replies(client, aid, rpid, c.get("rcount", 0), cookie)
+            entry["replies"] = await _fetch_all_replies(
+                client, aid, rpid, c.get("rcount", 0), cookie
+            )
             await asyncio.sleep(REPLY_DELAY / 1000)
         result.append(entry)
         extra = f" ({len(entry['replies'])}条回复)" if entry["replies"] else ""
@@ -152,10 +153,10 @@ async def get_comments(
     bvid: str,
     page: int = 1,
     max_age: int = 30,
-    credential: Optional[CookieCredential] = None,
-    save_fmt: Optional[str] = None,
+    credential: CookieCredential | None = None,
+    save_fmt: str | None = None,
     with_replies: bool = False,
-    client: Optional[BiliClient] = None,
+    client: BiliClient | None = None,
 ) -> list:
     """
     获取单页评论（带缓存，含置顶合并与去重）
@@ -200,12 +201,12 @@ async def get_comments(
 async def get_all_comments(
     bvid: str,
     max_age: int = 30,
-    credential: Optional[CookieCredential] = None,
-    save_fmt: Optional[str] = None,
+    credential: CookieCredential | None = None,
+    save_fmt: str | None = None,
     with_replies: bool = False,
     max_pages: int = 0,
     max_comments: int = 0,
-    client: Optional[BiliClient] = None,
+    client: BiliClient | None = None,
 ) -> list:
     """
     全量翻页获取评论（带缓存；cursor 接口 → WBI → page 接口自动降级）
@@ -246,7 +247,7 @@ async def get_all_comments(
 
         all_items: list = []
         page = 1
-        cursor: Optional[int] = None
+        cursor: int | None = None
         empty_streak = 0
         known_total = 0
         using_page_api = False  # 一旦降级到 page 接口就保持使用

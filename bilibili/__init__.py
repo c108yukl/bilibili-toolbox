@@ -23,12 +23,12 @@ B站 弹幕/评论/字幕 抓取工具包（自研 HTTP 栈，零 bilibili-api �
 
 from bilibili.auth import parse_cookie
 from bilibili.browser_cookie import get_browser_cookie
-from bilibili.utils import extract_bvid, is_valid_bvid
+from bilibili.client import BiliAPIError, BiliClient, BiliError, BiliHTTPError, BiliNetworkError
+from bilibili.comments import get_all_comments, get_comments
 from bilibili.danmaku import get_danmaku
-from bilibili.comments import get_comments, get_all_comments
-from bilibili.subtitle import get_subtitle
 from bilibili.models import CookieCredential, Danmaku, Subtitle, SubtitleLine
-from bilibili.client import BiliClient, BiliError, BiliAPIError, BiliHTTPError, BiliNetworkError
+from bilibili.subtitle import get_subtitle
+from bilibili.utils import extract_bvid, is_valid_bvid
 
 __version__ = "1.2.0"
 

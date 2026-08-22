@@ -24,8 +24,8 @@ import logging
 import os
 import re
 import unicodedata
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable, List, Optional
 
 import aiohttp
 
@@ -48,10 +48,10 @@ _LATIN_RE = re.compile(r"[a-z0-9]{2,}")
 _CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
 
-def extract_tokens(text: str) -> List[str]:
+def extract_tokens(text: str) -> list[str]:
     """提取文本 token：拉丁词(≥2位) + 中文二元组"""
     norm = unicodedata.normalize("NFKC", str(text or "")).lower()
-    tokens: List[str] = []
+    tokens: list[str] = []
     for m in _LATIN_RE.findall(norm):
         tokens.append(m)
     for run in _CJK_RUN_RE.findall(norm):
@@ -107,7 +107,7 @@ class AIConfig:
         )
 
 
-def _merged_cfg(cfg: Optional[AIConfig]) -> AIConfig:
+def _merged_cfg(cfg: AIConfig | None) -> AIConfig:
     base = AIConfig.from_env()
     if cfg is None:
         return base
@@ -146,9 +146,9 @@ OnReasoning = Callable[[str, str], Awaitable[None] | None]
 async def ai_chat(
     text: str,
     prompt: str,
-    cfg: Optional[AIConfig] = None,
-    on_chunk: Optional[OnChunk] = None,
-    on_reasoning: Optional[OnReasoning] = None,
+    cfg: AIConfig | None = None,
+    on_chunk: OnChunk | None = None,
+    on_reasoning: OnReasoning | None = None,
 ) -> dict:
     """
     OpenAI 兼容 chat/completions 调用（默认流式，支持思考模型）
@@ -186,7 +186,9 @@ async def ai_chat(
                         detail = ((await resp.json()).get("error") or {}).get("message", "")
                     except Exception:
                         pass
-                    raise ValueError(f"AI 接口错误(HTTP {resp.status}){': ' + detail if detail else ''}")
+                    raise ValueError(
+                        f"AI 接口错误(HTTP {resp.status}){': ' + detail if detail else ''}"
+                    )
                 data = await resp.json()
             msg = ((data.get("choices") or [{}])[0].get("message")) or {}
             if not msg.get("content"):
@@ -207,7 +209,9 @@ async def ai_chat(
                     detail = ((await resp.json()).get("error") or {}).get("message", "")
                 except Exception:
                     pass
-                raise ValueError(f"AI 接口错误(HTTP {resp.status}){': ' + detail if detail else ''}")
+                raise ValueError(
+                    f"AI 接口错误(HTTP {resp.status}){': ' + detail if detail else ''}"
+                )
             async for raw_line in resp.content:
                 line = raw_line.decode("utf-8", "replace").strip()
                 if not line.startswith("data:"):
@@ -240,7 +244,7 @@ async def ai_chat(
 def build_danmaku_text(dms: list, max_items: int = 500) -> str:
     """弹幕 → 文本（去重 + 条数上限 + 20000 字符截断）"""
     seen: set = set()
-    out: List[str] = []
+    out: list[str] = []
     for d in dms or []:
         text = d.get("text", "") if isinstance(d, dict) else getattr(d, "text", "")
         text = str(text).strip()
@@ -266,13 +270,14 @@ def build_subtitle_text(subs, max_items: int = 0, with_time: bool = False) -> st
 def build_comment_text(items: list, max_items: int = 300) -> str:
     """评论 → 文本（去重 + 条数上限 + 每评论最多 3 条回复 + 20000 字符截断）"""
     seen: set = set()
-    lines: List[str] = []
+    lines: list[str] = []
     for item in items or []:
         c = (item or {}).get("comment") or {}
         text = str((c.get("content") or {}).get("message", "")).strip()
         if text and text not in seen:
             seen.add(text)
-            lines.append(f"[赞{c.get('like', 0)}] {(c.get('member') or {}).get('uname', '匿名')}: {text}")
+            uname = (c.get('member') or {}).get('uname', '匿名')
+            lines.append(f"[赞{c.get('like', 0)}] {uname}: {text}")
         for r in ((item or {}).get("replies") or [])[:3]:
             rtext = str((r.get("content") or {}).get("message", "")).strip()
             if rtext and rtext not in seen:
@@ -288,10 +293,10 @@ def build_comment_text(items: list, max_items: int = 300) -> str:
 async def analyze_danmaku(
     dms: list,
     prompt: str = "",
-    cfg: Optional[AIConfig] = None,
+    cfg: AIConfig | None = None,
     max_items: int = 500,
-    on_chunk: Optional[OnChunk] = None,
-    on_reasoning: Optional[OnReasoning] = None,
+    on_chunk: OnChunk | None = None,
+    on_reasoning: OnReasoning | None = None,
 ) -> dict:
     """分析弹幕（默认提示词与扩展一致）"""
     default_prompt = (
@@ -308,10 +313,10 @@ async def analyze_danmaku(
 async def summarize_subtitle(
     sub,
     prompt: str = "",
-    cfg: Optional[AIConfig] = None,
+    cfg: AIConfig | None = None,
     max_items: int = 0,
-    on_chunk: Optional[OnChunk] = None,
-    on_reasoning: Optional[OnReasoning] = None,
+    on_chunk: OnChunk | None = None,
+    on_reasoning: OnReasoning | None = None,
 ) -> dict:
     """总结字幕（默认提示词与扩展一致）"""
     default_prompt = (
@@ -327,10 +332,10 @@ async def summarize_subtitle(
 async def analyze_comments(
     items: list,
     prompt: str = "",
-    cfg: Optional[AIConfig] = None,
+    cfg: AIConfig | None = None,
     max_items: int = 300,
-    on_chunk: Optional[OnChunk] = None,
-    on_reasoning: Optional[OnReasoning] = None,
+    on_chunk: OnChunk | None = None,
+    on_reasoning: OnReasoning | None = None,
 ) -> dict:
     """分析评论（默认提示词与扩展一致）"""
     default_prompt = (

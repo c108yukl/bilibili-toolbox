@@ -26,3 +26,12 @@ bak/
 # 工具目录
 .workbuddy/
 .qoder/
+.zcode/
+
+# 外部实验项目与临时产物（本地保留，不入库）
+plugin-src/
+test-ga/
+node_modules/
+*.tgz
+tsconfig.base.json
+tsconfig.base.client.json

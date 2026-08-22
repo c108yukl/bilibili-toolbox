@@ -13,7 +13,6 @@
 """
 
 import base64
-import ctypes
 import json
 import logging
 import os
@@ -87,7 +86,7 @@ def _aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes) ->
     try:
         return AES.new(key, AES.MODE_GCM, nonce=nonce).decrypt_and_verify(ciphertext, tag)
     except ValueError as e:
-        raise BrowserCookieError(f"Cookie 解密失败: {e}")
+        raise BrowserCookieError(f"Cookie 解密失败: {e}") from e
 
 
 def _chromium_user_data(browser: str) -> Path:
@@ -126,14 +125,14 @@ def _load_local_state(user_data: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        raise BrowserCookieError(f"解析 Local State 失败: {e}")
+        raise BrowserCookieError(f"解析 Local State 失败: {e}") from e
 
 
 def _get_aes_key(local_state: dict) -> bytes:
     try:
         raw = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
     except (KeyError, ValueError) as e:
-        raise BrowserCookieError(f"读取加密密钥失败: {e}")
+        raise BrowserCookieError(f"读取加密密钥失败: {e}") from e
     if raw.startswith(b"DPAPI"):
         raw = _dpapi_unprotect(raw[5:])
     if len(raw) != 32:
@@ -175,12 +174,12 @@ def _read_sqlite_copy(db_path: Path, query: str, browser: str = "") -> list:
         shutil.copy2(db_path, tmp)
         with sqlite3.connect(tmp) as conn:
             return conn.execute(query).fetchall()
-    except PermissionError:
+    except PermissionError as e:
         raise BrowserCookieError(
             f"{browser} 正在运行，Cookie 数据库被锁定，请先关闭 {browser} 再重试"
-            f"（或改用 --cookie 手动传入）")
+            f"（或改用 --cookie 手动传入）") from e
     except (sqlite3.Error, OSError) as e:
-        raise BrowserCookieError(f"读取 Cookie 数据库失败: {e}")
+        raise BrowserCookieError(f"读取 Cookie 数据库失败: {e}") from e
     finally:
         try:
             os.unlink(tmp)
@@ -277,7 +276,9 @@ def get_browser_cookie(browser: str) -> str:
         raise BrowserCookieError(f"不支持的浏览器: {browser}（可用: {'/'.join(BROWSERS)}）")
     cookies = _read_firefox_cookies() if browser == "firefox" else _read_chromium_cookies(browser)
     if not cookies:
-        raise BrowserCookieError(f"未在 {browser} 中找到 B 站 Cookie，请先在浏览器中登录 bilibili.com")
+        raise BrowserCookieError(
+            f"未在 {browser} 中找到 B 站 Cookie，请先在浏览器中登录 bilibili.com"
+        )
     names = sorted({c[0] for c in cookies})
     logger.info("已从 %s 提取 %d 个 B 站 Cookie (%s)", browser, len(cookies), ", ".join(names))
     return _format_cookie_string(cookies)

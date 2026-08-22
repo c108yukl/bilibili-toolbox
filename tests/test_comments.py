@@ -1,12 +1,11 @@
 """评论抓取测试：cursor → WBI → page 降级、置顶合并去重、滑动窗口（FakeClient）"""
 
 import pytest
+from fake_client import FakeClient, make_comment, view_handler
 
 from bilibili import config
 from bilibili.client import BiliAPIError
 from bilibili.comments import get_all_comments, get_comments
-
-from fake_client import FakeClient, make_comment, view_handler
 
 MAIN_URL = "https://api.bilibili.com/x/v2/reply/main"
 PAGE_URL = "https://api.bilibili.com/x/v2/reply"

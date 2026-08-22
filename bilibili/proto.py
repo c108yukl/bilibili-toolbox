@@ -12,7 +12,6 @@
 """
 
 import logging
-from typing import List
 
 from bilibili.models import Danmaku
 
@@ -59,7 +58,7 @@ class _Reader:
         return chunk
 
 
-def parse_dm_seg(data: bytes) -> List[Danmaku]:
+def parse_dm_seg(data: bytes) -> list[Danmaku]:
     """
     解析 seg.so 返回的 protobuf 二进制 → Danmaku 列表
 
@@ -73,7 +72,7 @@ def parse_dm_seg(data: bytes) -> List[Danmaku]:
         对截断/损坏数据保持健壮：任何一次字段读取没有推进游标即终止解析。
     """
     reader = _Reader(data)
-    dms: List[Danmaku] = []
+    dms: list[Danmaku] = []
     while reader.pos < len(reader.data):
         start = reader.pos
         tag = reader.read_varint()
@@ -91,8 +90,8 @@ def parse_dm_seg(data: bytes) -> List[Danmaku]:
                     break
                 f, w = ftag >> 3, ftag & 7
                 if w == 2:
-                    l = reader.read_varint()
-                    raw = reader.sub(l)
+                    length = reader.read_varint()
+                    raw = reader.sub(length)
                     if f == 6:
                         dm.uid = raw.decode("utf-8", "replace")
                     elif f == 7:

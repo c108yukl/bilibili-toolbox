@@ -9,8 +9,7 @@
 """
 
 import logging
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +63,10 @@ class SubtitleLine:
 class Subtitle:
     """视频字幕（兼容旧版 Subtitle 对象的 to_srt/to_ass/to_lrc/to_simple_json 用法）"""
 
-    def __init__(self, lan: str, lan_doc: str = "", lines: Optional[List[SubtitleLine]] = None):
+    def __init__(self, lan: str, lan_doc: str = "", lines: list[SubtitleLine] | None = None):
         self.lan = lan
         self.lan_doc = lan_doc or lan
-        self.lines: List[SubtitleLine] = lines or []
+        self.lines: list[SubtitleLine] = lines or []
 
     def __len__(self) -> int:
         return len(self.lines)

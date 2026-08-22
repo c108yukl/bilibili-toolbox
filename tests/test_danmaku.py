@@ -3,13 +3,12 @@
 import json
 
 import pytest
+from fake_client import FakeClient, view_handler
+from test_proto import _dm_elem
 
 from bilibili import config
 from bilibili.danmaku import get_danmaku, parse_list_xml
 from bilibili.models import CookieCredential
-
-from fake_client import FakeClient, view_handler
-from test_proto import _dm_elem
 
 SEG_URL = "https://api.bilibili.com/x/v2/dm/web/seg.so"
 LIST_URL = "https://api.bilibili.com/x/v1/dm/list.so"
@@ -23,7 +22,7 @@ def _xml(*entries):
         t, text = e[0], e[1]
         mode, fs, color, uid = (e + (1, 25, 16777215, "h"))[2:6]
         parts.append(f'<d p="{t},{mode},{fs},{color},1710000000,0,{uid},1">{text}</d>')
-    return "<i>%s</i>" % "".join(parts)
+    return f'<i>{"".join(parts)}</i>'
 
 
 def _seg_bytes(*items):
@@ -48,7 +47,10 @@ def _make_client(duration=720, seg_items=None, list_items=None):
             seg_map = seg_items
         else:
             seg_map = {1: seg_items}
-        client.on_raw(SEG_URL, lambda params, ck: _seg_bytes(*seg_map.get(params["segment_index"], [])))
+        client.on_raw(
+            SEG_URL,
+            lambda params, ck: _seg_bytes(*seg_map.get(params["segment_index"], [])),
+        )
     if list_items:
         client.on_raw(LIST_URL, lambda params, ck: _xml(*list_items).encode("utf-8"))
     return client

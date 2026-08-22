@@ -1,6 +1,5 @@
 """分析模块测试：热词 + AI 文本构建（不触网）"""
 
-import pytest
 
 from bilibili.analysis import (
     build_comment_text,

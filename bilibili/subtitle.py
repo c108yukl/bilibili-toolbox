@@ -10,7 +10,6 @@
 """
 
 import logging
-from typing import List, Optional
 
 from bilibili.client import BiliAPIError, BiliClient
 from bilibili.formatters import save_subtitle
@@ -43,7 +42,7 @@ def _match_lan(lan_code: str, codes: list, docs: list) -> str:
     if lan_code in codes:
         return lan_code
     lower = lan_code.lower()
-    for doc, code in zip(docs, codes):
+    for doc, code in zip(docs, codes, strict=True):
         if lower in doc.lower() or lower in code.lower():
             return code
     logger.warning("未找到匹配语言 '%s'，使用第一个 (%s)", lan_code, codes[0])
@@ -128,26 +127,32 @@ async def _download_subtitle(client: BiliClient, subtitles: list, lan_code: str,
                     lan_doc=lan_doc,
                     lines=[SubtitleLine.from_json(line) for line in body],
                 )
-            logger.debug("[字幕] %s 内容为空，尝试下一个", picked.get("lan_doc") or picked.get("lan"))
+            logger.debug("[字幕] %s 内容为空，尝试下一个",
+                         picked.get("lan_doc") or picked.get("lan"))
         except BiliAPIError as e:
             if e.code in _CODE_NEED_LOGIN:
                 need_login = True
-            logger.info("  [字幕] %s 下载失败，尝试下一个...", picked.get("lan_doc") or picked.get("lan"))
+            logger.info("  [字幕] %s 下载失败，尝试下一个...",
+                        picked.get("lan_doc") or picked.get("lan"))
         except Exception as e:
-            logger.info("  [字幕] %s 下载失败，尝试下一个... (%s)", picked.get("lan_doc") or picked.get("lan"), e)
+            logger.info("  [字幕] %s 下载失败，尝试下一个... (%s)",
+                        picked.get("lan_doc") or picked.get("lan"), e)
 
     if need_login and not cookie:
-        raise ValueError("获取字幕需要登录 Cookie（B站字幕接口强制登录），请传入 --cookie 或 --browser-cookie")
+        raise ValueError(
+            "获取字幕需要登录 Cookie（B站字幕接口强制登录），"
+            "请传入 --cookie 或 --browser-cookie"
+        )
     return None
 
 
 async def get_subtitle(
     bvid: str,
     page_index: int = 0,
-    credential: Optional[CookieCredential] = None,
+    credential: CookieCredential | None = None,
     lan_code: str = "",
     save_fmt: str = "srt",
-    client: Optional[BiliClient] = None,
+    client: BiliClient | None = None,
 ):
     """
     获取视频字幕（Player WBI → view 字幕字段 → 重拉 三级降级）
@@ -180,7 +185,7 @@ async def get_subtitle(
         cookie = bool(credential and credential.has_sessdata)
 
         # Try 1: Player API（WBI 签名，字幕的正确来源）
-        subs: List[dict] = []
+        subs: list[dict] = []
         try:
             if aid and cid:
                 subs = await _fetch_player_subtitles(client, aid, cid, cookie)
@@ -188,7 +193,8 @@ async def get_subtitle(
             if e.code in _CODE_NEED_LOGIN:
                 if not cookie:
                     raise ValueError(
-                        "获取字幕需要登录 Cookie（B站字幕接口强制登录），请传入 --cookie 或 --browser-cookie"
+                        "获取字幕需要登录 Cookie（B站字幕接口强制登录），"
+                        "请传入 --cookie 或 --browser-cookie"
                     ) from None
                 logger.warning("[字幕] Player API 提示未登录，尝试兜底链路...")
             else:
@@ -213,8 +219,11 @@ async def get_subtitle(
             return None
 
         codes = [s.get("lan", "") for s in subs]
-        docs = [s.get("lan_doc", "") or SUBTITLE_LAN_MAP.get(c, c) for c, s in zip(codes, subs)]
-        logger.info("[字幕] 可用语言: %s", dict(zip(docs, codes)))
+        docs = [
+            s.get("lan_doc", "") or SUBTITLE_LAN_MAP.get(c, c)
+            for c, s in zip(codes, subs, strict=True)
+        ]
+        logger.info("[字幕] 可用语言: %s", dict(zip(docs, codes, strict=True)))
 
         # 用户指定语言 → 精确匹配；否则按优先级
         if lan_code:

@@ -1,6 +1,5 @@
 """seg.so protobuf 最小解析器测试"""
 
-import pytest
 
 from bilibili.proto import parse_dm_seg
 

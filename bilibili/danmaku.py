@@ -16,10 +16,9 @@
 import logging
 import math
 import re
-from typing import List, Optional
 
 from bilibili.cache import cache_get, cache_key, cache_set
-from bilibili.client import BiliClient, BiliError
+from bilibili.client import BiliClient
 from bilibili.formatters import save_danmaku
 from bilibili.models import CookieCredential, Danmaku
 from bilibili.proto import parse_dm_seg
@@ -33,13 +32,13 @@ _DM_XML_RE = re.compile(r'<d p="([^"]+)"[^>]*>([\s\S]*?)</d>')
 _SEG_COVER = 360
 
 
-def parse_list_xml(xml_text: str) -> List[Danmaku]:
+def parse_list_xml(xml_text: str) -> list[Danmaku]:
     """
     解析 list.so 返回的 XML → Danmaku 列表
 
     <d p="time,mode,font_size,color,ctime,pool,mid_hash,rowid">text</d>
     """
-    dms: List[Danmaku] = []
+    dms: list[Danmaku] = []
     for match in _DM_XML_RE.finditer(xml_text or ""):
         parts = match.group(1).split(",")
         try:
@@ -59,10 +58,10 @@ def parse_list_xml(xml_text: str) -> List[Danmaku]:
     return dms
 
 
-async def _fetch_seg_danmaku(client: BiliClient, cid: int, duration: float) -> List[Danmaku]:
+async def _fetch_seg_danmaku(client: BiliClient, cid: int, duration: float) -> list[Danmaku]:
     """按分段拉取 seg.so 全量弹幕（需登录 Cookie）"""
     seg_count = max(1, math.ceil((duration or 0) / _SEG_COVER)) if duration else 1
-    dms: List[Danmaku] = []
+    dms: list[Danmaku] = []
     for i in range(1, seg_count + 1):
         try:
             raw = await client.fetch_raw(
@@ -75,7 +74,7 @@ async def _fetch_seg_danmaku(client: BiliClient, cid: int, duration: float) -> L
     return dms
 
 
-async def _fetch_list_danmaku(client: BiliClient, cid: int) -> List[Danmaku]:
+async def _fetch_list_danmaku(client: BiliClient, cid: int) -> list[Danmaku]:
     """拉取 list.so 弹幕（XML）"""
     raw = await client.fetch_raw(
         "https://api.bilibili.com/x/v1/dm/list.so",
@@ -96,9 +95,9 @@ async def get_danmaku(
     bvid: str,
     page_index: int = 0,
     max_age: int = 30,
-    credential: Optional[CookieCredential] = None,
-    save_fmt: Optional[str] = None,
-    client: Optional[BiliClient] = None,
+    credential: CookieCredential | None = None,
+    save_fmt: str | None = None,
+    client: BiliClient | None = None,
 ) -> list:
     """
     获取视频弹幕（全量，seg.so + list.so 对比取多）
@@ -133,7 +132,7 @@ async def get_danmaku(
         duration = float(page_info.get("duration") or info.get("duration") or 0)
         logger.info("[视频] %s (cid=%s)", title, cid)
 
-        dms: List[Danmaku] = []
+        dms: list[Danmaku] = []
         if credential and credential.has_sessdata:
             logger.info("[弹幕] 使用登录态分段接口 seg.so 全量抓取...")
             dms = await _fetch_seg_danmaku(client, cid, duration)

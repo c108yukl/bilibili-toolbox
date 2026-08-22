@@ -24,20 +24,20 @@ from bilibili.analysis import (
     danmaku_word_cloud,
     summarize_subtitle,
 )
+from bilibili.auth import parse_cookie
 from bilibili.browser_cookie import get_browser_cookie
 from bilibili.client import BiliClient
+from bilibili.comments import get_all_comments, get_comments
 from bilibili.config import LOG_LEVEL
+from bilibili.danmaku import get_danmaku
 from bilibili.formatters import (
     COMMENT_FORMATS,
     DANMAKU_FORMATS,
     normalize_fmt,
     save_analysis,
 )
-from bilibili.utils import extract_bvid
-from bilibili.auth import parse_cookie
-from bilibili.danmaku import get_danmaku
-from bilibili.comments import get_all_comments, get_comments
 from bilibili.subtitle import get_subtitle
+from bilibili.utils import extract_bvid
 
 # 非字幕格式 → 字幕保存时的兜底格式
 _SUBTITLE_FMT_MAP = {"txt": "srt", "csv": "srt"}
@@ -215,7 +215,8 @@ async def main() -> int:
                         bvid, "cloud", "json",
                     )
                     logging.info("[热词] %d 个: %s",
-                                 len(words), ", ".join(f"{w['word']}({w['count']})" for w in words[:10]))
+                                 len(words),
+                                 ", ".join(f"{w['word']}({w['count']})" for w in words[:10]))
             except Exception as e:
                 logging.error("[弹幕] 失败: %s", e)
                 failed = True

@@ -103,12 +103,20 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt") -> N
             rows.append({**c, "level": "comment", "reply_to": ""})
             for r in item.get("replies", []):
                 rows.append(
-                    {**format_reply(r), "level": "reply", "reply_count": "", "rpid": r.get("rpid", 0)}
+                    {
+                        **format_reply(r),
+                        "level": "reply",
+                        "reply_count": "",
+                        "rpid": r.get("rpid", 0),
+                    }
                 )
         with out.open("w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(
                 f,
-                fieldnames=["level", "like", "uname", "time", "text", "reply_count", "reply_to", "rpid"],
+                fieldnames=[
+                    "level", "like", "uname", "time", "text",
+                    "reply_count", "reply_to", "rpid",
+                ],
             )
             w.writeheader()
             w.writerows(rows)
@@ -120,7 +128,8 @@ def save_comments(comments_with_replies: list, bvid: str, fmt: str = "txt") -> N
             lines.append(f"[+{c.get('like', 0)}] {(c.get('member') or {}).get('uname', '')}: "
                          f"{(c.get('content') or {}).get('message', '')}")
             for r in item.get("replies", []):
-                lines.append(f"  ↳[+{r.get('like', 0)}] {(r.get('member') or {}).get('uname', '')}: "
+                runame = (r.get('member') or {}).get('uname', '')
+                lines.append(f"  ↳[+{r.get('like', 0)}] {runame}: "
                              f"{(r.get('content') or {}).get('message', '')}")
         out.write_text("\n".join(lines), encoding="utf-8")
 
@@ -154,7 +163,9 @@ def save_danmaku(dms: list, bvid: str, fmt: str = "txt") -> None:
 
     elif fmt == "csv":
         with out.open("w", newline="", encoding="utf-8-sig") as f:
-            w = csv.DictWriter(f, fieldnames=["time_s", "text", "mode", "font_size", "color", "uid"])
+            w = csv.DictWriter(
+                f, fieldnames=["time_s", "text", "mode", "font_size", "color", "uid"]
+            )
             w.writeheader()
             w.writerows(
                 [

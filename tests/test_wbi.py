@@ -4,6 +4,7 @@ import hashlib
 import time
 
 import pytest
+from fake_client import FakeClient, heartbeat_handler, nav_handler
 
 from bilibili import wbi
 from bilibili.wbi import (
@@ -16,8 +17,6 @@ from bilibili.wbi import (
     sign_params,
     sync_server_time,
 )
-
-from fake_client import FakeClient, nav_handler, heartbeat_handler
 
 IMG = "7cd084941338484aae1ad9425b84077c"
 SUB = "4932caff0ff746eab6f01bf08b70ac45"
