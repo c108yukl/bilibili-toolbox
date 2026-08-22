@@ -30,7 +30,7 @@ from bilibili.models import CookieCredential, Danmaku, Subtitle, SubtitleLine
 from bilibili.subtitle import get_subtitle
 from bilibili.utils import extract_bvid, is_valid_bvid
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 __all__ = [
     "parse_cookie",

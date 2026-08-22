@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-B站爬虫扩展 - MCP 本地桥接服务 (v1.2.0)
+B站爬虫扩展 - MCP 本地桥接服务 (v1.3.0)
 
 架构:
     AI 客户端 (Claude Desktop / Cursor / DSH 等, MCP over HTTP)
@@ -33,7 +33,7 @@ from aiohttp import web
 logging.basicConfig(level=logging.INFO, format="[MCP] %(message)s")
 log = logging.getLogger("mcp")
 
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 CALL_TIMEOUT = 300  # 工具调用超时（秒）
 
 # ── MCP 工具定义（协议权威，扩展侧按名执行） ─────────────────

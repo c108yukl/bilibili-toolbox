@@ -220,7 +220,7 @@ async function mcpConnect() {
     ws.onopen = () => {
       mcpConnected = true;
       mcpSession = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
-      mcpSend({ type: 'hello', session: mcpSession, version: '1.2.0' });
+      mcpSend({ type: 'hello', session: mcpSession, version: '1.3.0' });
       devLog('[MCP] 已连接本地服务 ws://127.0.0.1:' + port + '/ws');
     };
     ws.onmessage = async (ev) => {

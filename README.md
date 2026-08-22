@@ -16,7 +16,7 @@
 │   └── webapp.py        #   Streamlit 实现（包内）
 ├── cli.py               # 命令行入口（薄壳，兼容 python cli.py）
 ├── app.py               # Streamlit 网页版入口（薄壳，streamlit run app.py）
-├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.2.0, ES Module，三种界面风格 + MCP 服务)
+├── bilibili-extension--main/  # Edge/Chrome 扩展 (MV3, v1.3.0, ES Module，三种界面风格 + MCP 服务)
 ├── mcp_server.py              # MCP 本地桥接服务（自定义端口，AI 调用扩展 + 自动 Cookie）
 ├── tests/               # pytest 测试（139 个，全部离线可跑）
 └── bak/                 # 旧版本备份（保留，已忽略）
