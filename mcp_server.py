@@ -110,6 +110,20 @@ TOOLS = [
         "description": "查询扩展自动获取的B站登录状态（是否已登录，用于判断数据完整度）",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "get_live_info",
+        "description": "获取B站直播间信息：标题、主播、分区、人气值、开播状态",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": {
+                    "type": "integer",
+                    "description": "直播间号（live.bilibili.com/ 后的数字）",
+                }
+            },
+            "required": ["room_id"],
+        },
+    },
 ]
 
 

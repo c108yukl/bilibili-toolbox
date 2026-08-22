@@ -140,9 +140,10 @@ async function liveStart(roomId) {
   const cookies = await getBiliCookies();
   const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
   const uid = parseInt((cookies.find(c => c.name === 'DedeUserID') || {}).value || '0', 10) || 0;
-  // 弹幕服务器地址 + token
+  const buvid = encodeURIComponent((cookies.find(c => c.name === 'buvid3') || {}).value || '');
+  // 弹幕服务器地址 + token（buvid3 防风控 -352）
   const danmu = await biliFetchJSON(
-    `https://api.live.bilibili.com/xlive/web-room/v1/danmu/getInfoByRoom?room_id=${roomId}`,
+    `https://api.live.bilibili.com/xlive/web-room/v1/danmu/getInfoByRoom?room_id=${roomId}&buvid3=${buvid}`,
     { cookie: cookieStr }
   );
   const token = danmu.token || (danmu.data && danmu.data.token) || '';
@@ -209,6 +210,31 @@ function liveStop() {
   if (liveConnected) liveBroadcast({ action: 'liveState', on: false });
   liveConnected = false;
   liveRoomId = null;
+}
+
+// 直播间信息（弹窗与 MCP 工具共用；buvid3 防风控 -352）
+async function fetchLiveInfo(roomId) {
+  const cookies = await getBiliCookies();
+  const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  const buvid = encodeURIComponent((cookies.find(c => c.name === 'buvid3') || {}).value || '');
+  const data = await biliFetchJSON(
+    `https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id=${roomId}&buvid3=${buvid}`,
+    { cookie: cookieStr }
+  );
+  const d = data || {};
+  const room = d.room_info || {};
+  const anchor = ((d.anchor_info || {}).base_info) || {};
+  const watched = (d.watched_show || {}).num;
+  return {
+    ok: true,
+    roomId: room.room_id || roomId,
+    title: room.title || '',
+    anchor: anchor.uname || '',
+    live: room.live_status === 1,
+    liveStatus: room.live_status,
+    area: room.area_name || '',
+    watched: typeof watched === 'number' ? watched.toLocaleString() : '',
+  };
 }
 
 // ============ UI 风格切换（aurora / editorial / neumorphism） ============
@@ -360,6 +386,11 @@ async function executeMcpTool(tool, args, cookieStr) {
         has_sessdata: names.includes('SESSDATA'),
         has_bili_jct: names.includes('bili_jct'),
       };
+    }
+    case 'get_live_info': {
+      const roomId = parseInt(args.room_id || args.bvid, 10);
+      if (!roomId) throw new Error('room_id 无效');
+      return await fetchLiveInfo(roomId);
     }
     default:
       throw new Error(`未知工具: ${tool}`);
@@ -1403,28 +1434,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'getLiveInfo') {
     // 直播间信息（标题 / 主播 / 人气 / 开播状态）
     (async () => {
-      try {
-        const cookies = await getBiliCookies();
-        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-        const data = await biliFetchJSON(
-          `https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id=${parseInt(msg.roomId, 10)}`,
-          { cookie: cookieStr }
-        );
-        const d = data || {};
-        const room = d.room_info || {};
-        const anchor = ((d.anchor_info || {}).base_info) || {};
-        const watched = (d.watched_show || {}).num;
-        sendResponse({
-          ok: true,
-          roomId: room.room_id || parseInt(msg.roomId, 10),
-          title: room.title || '',
-          anchor: anchor.uname || '',
-          live: room.live_status === 1,
-          liveStatus: room.live_status,
-          area: room.area_name || '',
-          watched: typeof watched === 'number' ? watched.toLocaleString() : '',
-        });
-      } catch (e) {
+      try { sendResponse(await fetchLiveInfo(parseInt(msg.roomId, 10))); }
+      catch (e) {
         try { sendResponse({ ok: false, error: String((e && e.message) || e) }); } catch (e2) { }
       }
     })();

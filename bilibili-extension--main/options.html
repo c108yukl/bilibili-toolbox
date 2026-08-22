@@ -159,15 +159,8 @@
   </style>
 </head>
 <body>
-  <!-- 尽早应用界面风格类，避免深色闪屏 -->
-  <script>
-    try {
-      chrome.storage.local.get('settings', (s) => {
-        const st = ((s && s.settings) || {}).uiStyle;
-        if (st === 'editorial' || st === 'neumorphism') document.body.classList.add('style-' + st);
-      });
-    } catch (e) { }
-  </script>
+  <!-- 尽早应用界面风格类，避免深色闪屏（MV3 禁止内联脚本，故独立成文件） -->
+  <script src="options-boot.js"></script>
   <div class="header">
     <div class="logo">B</div>
     <div>
