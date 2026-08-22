@@ -1,8 +1,8 @@
 /* ============================================================
-   B站爬虫扩展 - 预览版弹窗逻辑（popup-preview）
-   v1.2.0-preview
+   B站爬虫扩展 - 预览版弹窗逻辑（popup-preview）v2.0-preview
    与经典版共用：utils.js 工具库 + background 消息协议（port 'scraper'）
-   视觉：玻璃拟态 + 弹性微交互 + 完成彩带庆祝
+   视觉：Aurora Console —— App-Shell 常驻操作栏、阶段时间线、
+   AI LIVE 徽章、批量实时解析、主题感知派生色
    ============================================================ */
 
 import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
@@ -54,7 +54,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     } catch (e) { }
   }
 
-  // 按钮 / 开关 / 任务卡 / chip 点击音效（全局捕获，与经典版一致的交互反馈）
+  // 按钮 / 开关 / 任务卡 / chip 点击音效（全局捕获）
   document.addEventListener('click', (e) => {
     if (e.target.closest('.pv-go') || e.target.closest('.pv-btn') || e.target.closest('.pv-icon-btn') || e.target.closest('.pv-file')) {
       playSound('click');
@@ -106,7 +106,12 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     function burst() {
       ensure();
       if (!ctx) return;
-      const colors = ['#00c8ff', '#7c5cff', '#34d399', '#fbbf24', '#f472b6', '#ffffff', '#38bdf8'];
+      const styles = getComputedStyle(document.documentElement);
+      const colors = [
+        styles.getPropertyValue('--accent').trim() || '#00c8ff',
+        styles.getPropertyValue('--accent2').trim() || '#7c5cff',
+        '#34d399', '#fbbf24', '#f472b6', '#ffffff',
+      ];
       for (let i = 0; i < 100; i++) {
         particles.push({
           x: window.innerWidth / 2 + (Math.random() - 0.5) * 220,
@@ -133,7 +138,10 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     ];
     for (const [boxId, cardId] of tasks) {
       const card = $(cardId), box = $(boxId);
-      if (card && box) card.classList.toggle('on', box.checked);
+      if (card && box) {
+        card.classList.toggle('on', box.checked);
+        card.setAttribute('aria-pressed', box.checked ? 'true' : 'false');
+      }
     }
     for (const chipId of ['pv-chip-cloud', 'pv-chip-up', 'pv-chip-ai', 'pv-chip-ai-dm', 'pv-chip-ai-cm', 'pv-chip-replies']) {
       const chip = $(chipId);
@@ -186,24 +194,89 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   }
   function clearLog() { $('pv-log').innerHTML = ''; }
 
-  // ── 进度（rAF 插值平滑过渡，丝滑不跳变） ──
+  // ══════════════════════════════════════════
+  // 阶段时间线：从进度消息前缀解析当前阶段
+  // 视频 → 弹幕 → 字幕 → 评论 → AI
+  // ══════════════════════════════════════════
+  const STAGE_ORDER = ['video', 'dm', 'sub', 'cm', 'ai'];
+  const STAGE_RULES = [
+    ['video', /^\[视频\]|▶️\s*\[/],
+    ['dm', /^\[弹幕\]/],
+    ['sub', /^\[字幕\]/],
+    ['cm', /^\[评论\]|^第\d+页/],
+    ['ai', /^🤖/],
+  ];
+  let curStage = -1;
+
+  function stageEls() { return STAGE_ORDER.map(id => $('pv-stage-' + id)); }
+  function resetStages() {
+    curStage = -1;
+    for (const el of stageEls()) {
+      el.classList.remove('active', 'done');
+      const dot = el.querySelector('.pv-stage-dot');
+      if (dot) dot.textContent = '';
+    }
+  }
+  function setStage(id) {
+    const idx = STAGE_ORDER.indexOf(id);
+    if (idx < 0) return;
+    if (id === 'video' && curStage >= 0) resetStages(); // 批量：新视频从头开始
+    curStage = Math.max(curStage, idx);
+    STAGE_ORDER.forEach((sid, i) => {
+      const el = $('pv-stage-' + sid);
+      const dot = el.querySelector('.pv-stage-dot');
+      if (i < curStage) { el.classList.add('done'); el.classList.remove('active'); if (dot) dot.textContent = '✓'; }
+      else if (i === curStage) { el.classList.add('active'); el.classList.remove('done'); if (dot) dot.textContent = ''; }
+      else { el.classList.remove('active', 'done'); if (dot) dot.textContent = ''; }
+    });
+  }
+  function allStagesDone() {
+    curStage = STAGE_ORDER.length;
+    for (const el of stageEls()) {
+      el.classList.add('done');
+      el.classList.remove('active');
+      const dot = el.querySelector('.pv-stage-dot');
+      if (dot) dot.textContent = '✓';
+    }
+  }
+  function parseStageMsg(text) {
+    const t = String(text || '').trim();
+    for (const [id, re] of STAGE_RULES) if (re.test(t)) return id;
+    return null;
+  }
+
+  // ── 进度（rAF 插值平滑过渡，写入底栏 HUD） ──
   let animPct = 0;
   let animRaf = null;
   function setProgress(percent) {
-    $('pv-progress').classList.add('show');
     const target = Math.max(0, Math.min(100, percent));
     if (animRaf) cancelAnimationFrame(animRaf);
     const step = () => {
       animPct += (target - animPct) * 0.28;
       if (Math.abs(target - animPct) < 0.3) animPct = target;
-      $('pv-fill').style.width = animPct + '%';
+      $('pv-pfill').style.width = animPct + '%';
       $('pv-progress-pct').textContent = Math.round(animPct) + '%';
+      $('pv-pbar').setAttribute('aria-valuenow', String(Math.round(animPct)));
       if (animPct !== target) animRaf = requestAnimationFrame(step);
       else animRaf = null;
     };
     step();
   }
   function setProgressLabel(text) { $('pv-progress-label').textContent = text; }
+
+  // ── 底栏状态机：空闲（主按钮）↔ 运行（进度 HUD） ──
+  let doneRevertTimer = null;
+  function setRunning(state) {
+    running = state;
+    if (!state && doneRevertTimer) { clearTimeout(doneRevertTimer); doneRevertTimer = null; }
+    $('pv-foot-idle').hidden = state;
+    $('pv-foot-run').hidden = !state;
+    if (state) {
+      $('pv-foot-run').classList.remove('done');
+      $('pv-btn-start').classList.remove('pv-celebrate');
+    }
+    $('pv-dot').classList.toggle('running', state);
+  }
 
   // ── 点击涟漪（轻量，指针坐标生成扩散圆） ──
   function addRipple(e) {
@@ -220,22 +293,183 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     setTimeout(() => span.remove(), 600);
   }
 
-  // ── 文件 ──
+  // ── 鼠标聚光灯：卡片跟随光晕（rAF 节流，写 CSS 变量） ──
+  let spotRaf = 0;
+  document.addEventListener('mousemove', (e) => {
+    if (spotRaf) return;
+    const t = e.target, x = e.clientX, y = e.clientY;
+    spotRaf = requestAnimationFrame(() => {
+      spotRaf = 0;
+      const card = t && t.closest && t.closest('.pv-glass');
+      if (!card) return;
+      const r = card.getBoundingClientRect();
+      card.style.setProperty('--mx', (x - r.left) + 'px');
+      card.style.setProperty('--my', (y - r.top) + 'px');
+    });
+  }, { passive: true });
+
+  // ── 批量实时解析：计数 + chip 预览（点 × 移除） ──
+  function parseBvidList() {
+    const lines = $('pv-batch-list').value
+      .split(/\r?\n/)
+      .map(l => extractBVID(l))
+      .filter(Boolean);
+    return [...new Set(lines)];
+  }
+  function refreshBatch() {
+    const list = parseBvidList();
+    const countEl = $('pv-batch-count');
+    const chipsEl = $('pv-batch-chips');
+    countEl.textContent = list.length ? `已识别 ${list.length} 个 BV` : '尚无有效 BV';
+    countEl.style.color = list.length ? 'var(--accent, #00c8ff)' : '';
+    chipsEl.innerHTML = '';
+    list.slice(0, 5).forEach(bv => {
+      const chip = document.createElement('span');
+      chip.className = 'pv-bchip';
+      const b = document.createElement('b');
+      b.textContent = bv;
+      const x = document.createElement('button');
+      x.textContent = '×';
+      x.title = '移除 ' + bv;
+      x.setAttribute('aria-label', '移除 ' + bv);
+      x.addEventListener('click', () => {
+        const rest = parseBvidList().filter(v => v !== bv);
+        $('pv-batch-list').value = rest.join('\n');
+        refreshBatch();
+      });
+      chip.append(b, x);
+      chipsEl.appendChild(chip);
+    });
+    if (list.length > 5) {
+      const more = document.createElement('span');
+      more.className = 'pv-bchip';
+      more.textContent = `+${list.length - 5} more`;
+      chipsEl.appendChild(more);
+    }
+  }
+  let batchDeb = null;
+  $('pv-batch-list').addEventListener('input', () => {
+    clearTimeout(batchDeb);
+    batchDeb = setTimeout(refreshBatch, 250);
+  });
+
+  // ══════════════════════════════════════════
+  // AI 面板：三态 LIVE 徽章（排队中/生成中/完成）+ 计时
+  // ══════════════════════════════════════════
+  const AI_PANELS = {
+    'summary': { chk: 'pv-chk-ai', wait: '⏳ 等待字幕抓取，AI 排队中…' },
+    'ai-dm': { chk: 'pv-chk-ai-dm', wait: '⏳ 等待弹幕抓取，AI 排队中…' },
+    'ai-cm': { chk: 'pv-chk-ai-cm', wait: '⏳ 等待评论抓取，AI 排队中…' },
+  };
+  const aiClock = {}; // key -> { start, iv }
+
+  function fmtElapsed(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  }
+  function setAiState(key, state) {
+    const badge = $('pv-live-' + key);
+    const timerEl = $('pv-timer-' + key);
+    if (!badge) return;
+    badge.hidden = false;
+    badge.className = 'pv-live ' + state;
+    badge.querySelector('.pv-live-txt').textContent =
+      state === 'wait' ? '排队中' : state === 'live' ? '生成中' : '✓ 完成';
+    if (state === 'wait') {
+      timerEl.hidden = false;
+      timerEl.textContent = '00:00';
+      stopClock(key, true);
+      aiClock[key] = { start: 0, iv: null };
+    } else if (state === 'live') {
+      timerEl.hidden = false;
+      if (!aiClock[key] || !aiClock[key].start) {
+        stopClock(key, true);
+        const c = { start: Date.now(), iv: null };
+        c.iv = setInterval(() => { timerEl.textContent = fmtElapsed(Date.now() - c.start); }, 500);
+        aiClock[key] = c;
+        timerEl.textContent = '00:00';
+      }
+    } else if (state === 'done') {
+      const c = aiClock[key];
+      const final = c && c.start ? fmtElapsed(Date.now() - c.start) : null;
+      stopClock(key);
+      if (final) { timerEl.hidden = false; timerEl.textContent = final; }
+      else timerEl.hidden = true;
+    }
+  }
+  function stopClock(key, keepHidden) {
+    const c = aiClock[key];
+    if (c && c.iv) clearInterval(c.iv);
+    if (keepHidden && c) c.iv = null;
+  }
+  function resetAiPanels() {
+    for (const key of Object.keys(AI_PANELS)) {
+      const cfg = AI_PANELS[key];
+      const panel = $('pv-panel-' + key);
+      const body = $('pv-' + key + '-body');
+      const think = $('pv-' + key + '-think');
+      stopClock(key);
+      if ($(cfg.chk).checked) {
+        body.textContent = cfg.wait;
+        body.classList.add('wait');
+        think.style.display = 'none';
+        setAiState(key, 'wait');
+        panel.classList.add('show');
+      } else {
+        panel.classList.remove('show');
+      }
+    }
+  }
+
+  const lastTexts = {};
+  function showAiPanel(key, text, done, thinking) {
+    const body = $('pv-' + key + '-body');
+    body.classList.remove('wait');
+    const clock = aiClock[key];
+    if (!clock || !clock.start) setAiState(key, 'live'); // 首个 token 到达：开始计时
+    if (done) {
+      setAiState(key, 'done');
+      lastTexts['pv-panel-' + key] = text;
+    }
+    body.textContent = text;
+    const thinkEl = $('pv-' + key + '-think');
+    if (!thinking) thinkEl.style.display = 'none';
+    else { thinkEl.style.display = ''; $('pv-' + key + '-think-body').textContent = thinking; }
+    if (!done && text) body.scrollTop = body.scrollHeight;
+    $('pv-panel-' + key).classList.add('show');
+  }
+
+  // ── 文件（格式徽章 + 大小） ──
+  function fmtSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(2) + ' MB';
+  }
   function addDownload(filename, content, mimeType) {
-    const wrap = document.createElement('div');
-    wrap.style.display = 'inline-flex';
     const btn = document.createElement('button');
     btn.className = 'pv-file';
-    btn.textContent = '📎 ' + filename;
+    const ext = (filename.includes('.') ? filename.split('.').pop() : '').toLowerCase();
+    btn.dataset.ext = ext;
+    const extEl = document.createElement('span');
+    extEl.className = 'pv-file-ext';
+    extEl.textContent = (ext || 'FILE').toUpperCase();
+    const nameEl = document.createElement('span');
+    nameEl.className = 'pv-file-name';
+    nameEl.textContent = filename;
+    nameEl.title = filename;
+    const sizeEl = document.createElement('span');
+    sizeEl.className = 'pv-file-size';
+    sizeEl.textContent = fmtSize(typeof content === 'string' ? content.length : 0);
+    btn.append(extEl, nameEl, sizeEl);
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     blobUrls.push(url);
+    sizeEl.textContent = fmtSize(blob.size);
     btn.onclick = () => {
       const a = document.createElement('a');
       a.href = url; a.download = filename; a.click();
     };
-    wrap.appendChild(btn);
-    $('pv-dl').appendChild(wrap);
+    $('pv-dl').appendChild(btn);
   }
   function clearDownloads() {
     $('pv-dl').innerHTML = '';
@@ -257,31 +491,6 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     const el = $(id);
     if (el && !el.classList.contains('show')) el.classList.add('show');
   }
-  function showThinking(thinkId, bodyId, thinking) {
-    const thinkEl = $(thinkId);
-    if (!thinking) { thinkEl.style.display = 'none'; return; }
-    thinkEl.style.display = '';
-    $(bodyId).textContent = thinking;
-  }
-
-  // ── 状态 ──
-  function setRunning(state) {
-    running = state;
-    const btn = $('pv-btn-start');
-    btn.disabled = state;
-    btn.textContent = state ? '⏳ 正在爬取...' : '🚀 开始爬取';
-    $('pv-btn-cancel').style.display = state ? 'block' : 'none';
-    $('pv-dot').classList.toggle('running', state);
-  }
-
-  // ── 批量解析 ──
-  function parseBvidList() {
-    const lines = $('pv-batch-list').value
-      .split(/\r?\n/)
-      .map(l => extractBVID(l))
-      .filter(Boolean);
-    return [...new Set(lines)];
-  }
 
   // ── 启动任务 ──
   async function startTask() {
@@ -294,11 +503,12 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     }
     clearLog();
     clearDownloads();
-    for (const id of ['pv-panel-up', 'pv-panel-cloud', 'pv-panel-summary',
-                      'pv-panel-ai-dm', 'pv-panel-ai-cm']) {
-      $(id).classList.remove('show');
-    }
-    $('pv-progress').classList.remove('show');
+    for (const id of ['pv-panel-up', 'pv-panel-cloud']) $(id).classList.remove('show');
+    resetAiPanels();
+    resetStages();
+    animPct = 0;
+    setProgressLabel('准备中...');
+    setProgress(0);
     setRunning(true);
 
     if (!port) connect();
@@ -343,11 +553,14 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
 
     port.onMessage.addListener((msg) => {
       switch (msg.type) {
-        case 'progress':
+        case 'progress': {
           appendLog(msg.message, 'log-progress');
           setProgressLabel(msg.message.replace(/\s+/g, ' ').slice(0, 60));
+          const stage = parseStageMsg(msg.message);
+          if (stage) setStage(stage);
           if (typeof msg.percent === 'number') setProgress(msg.percent);
           break;
+        }
         case 'info': appendLog(msg.message, 'log-info'); break;
         case 'success':
           appendLog(msg.message, 'log-success');
@@ -357,23 +570,21 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
         case 'file': addDownload(msg.filename, msg.content, msg.mimeType); break;
         case 'up': showUp(msg.up); break;
         case 'cloud': showCloud(msg.words); break;
-        case 'summary': showAiPanel('pv-panel-summary', 'pv-summary-body', msg.partial,
-                                    msg.done !== false, 'pv-summary-think', 'pv-summary-think-body', msg.thinking); break;
-        case 'ai-dm': showAiPanel('pv-panel-ai-dm', 'pv-ai-dm-body', msg.partial,
-                                  msg.done !== false, 'pv-ai-dm-think', 'pv-ai-dm-think-body', msg.thinking); break;
-        case 'ai-cm': showAiPanel('pv-panel-ai-cm', 'pv-ai-cm-body', msg.partial,
-                                  msg.done !== false, 'pv-ai-cm-think', 'pv-ai-cm-think-body', msg.thinking); break;
+        case 'summary': showAiPanel('summary', msg.partial, msg.done !== false, msg.thinking); break;
+        case 'ai-dm': showAiPanel('ai-dm', msg.partial, msg.done !== false, msg.thinking); break;
+        case 'ai-cm': showAiPanel('ai-cm', msg.partial, msg.done !== false, msg.thinking); break;
         case 'done':
           appendLog('✅ ' + msg.message, 'log-success');
-          setRunning(false);
+          setProgressLabel('✅ ' + msg.message.replace(/\s+/g, ' ').slice(0, 40));
           setProgress(100);
-          $('pv-progress').classList.add('done');
-          setTimeout(() => $('pv-progress').classList.remove('done'), 1400);
+          allStagesDone();
+          $('pv-foot-run').classList.add('done');
           playSound('done');
           confetti.burst();
           toast('✅ ' + msg.message, 'ok');
           $('pv-btn-start').classList.add('pv-celebrate');
           setTimeout(() => $('pv-btn-start').classList.remove('pv-celebrate'), 1400);
+          doneRevertTimer = setTimeout(() => setRunning(false), 2600);
           break;
         case 'abort':
           appendLog('⛔ ' + msg.message, 'log-error');
@@ -384,6 +595,7 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
         case 'status':
           if (msg.running && !running) {
             appendLog('⏳ 检测到后台任务正在运行...', 'log-progress');
+            setProgressLabel('⏳ 后台任务运行中...');
             setRunning(true);
           } else if (!msg.running && running) {
             setRunning(false);
@@ -397,13 +609,54 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   }
 
   function showUp(up) {
-    const parts = [`👤 ${up.name}`];
-    if (up.fans != null) parts.push(`粉丝 ${up.fans.toLocaleString()}`);
-    if (up.archives != null) parts.push(`投稿 ${up.archives}`);
-    if (up.level != null) parts.push(`Lv${up.level}`);
-    if (up.official) parts.push(up.official);
-    if (up.sign) parts.push(`— ${up.sign}`);
-    $('pv-up').textContent = parts.join('  ·  ');
+    const box = $('pv-up');
+    box.innerHTML = '';
+    const row = document.createElement('div');
+    row.className = 'pv-up-row';
+    const name = document.createElement('span');
+    name.className = 'pv-up-name';
+    name.id = 'pv-up-name';
+    name.textContent = '👤 ' + (up.name || '未知UP主');
+    row.appendChild(name);
+    if (up.level != null) {
+      const lv = document.createElement('span');
+      lv.className = 'pv-up-lv';
+      lv.textContent = 'Lv' + up.level;
+      row.appendChild(lv);
+    }
+    if (up.official) {
+      const off = document.createElement('span');
+      off.className = 'pv-up-official';
+      off.textContent = up.official;
+      row.appendChild(off);
+    }
+    box.appendChild(row);
+
+    const stats = document.createElement('div');
+    stats.className = 'pv-up-stats';
+    const items = [
+      [up.fans != null ? up.fans.toLocaleString() : null, '粉丝'],
+      [up.archives != null ? String(up.archives) : null, '投稿'],
+    ];
+    for (const [val, label] of items) {
+      if (val == null) continue;
+      const stat = document.createElement('div');
+      stat.className = 'pv-up-stat';
+      const b = document.createElement('b');
+      b.textContent = val;
+      const s = document.createElement('span');
+      s.textContent = label;
+      stat.append(b, s);
+      stats.appendChild(stat);
+    }
+    if (stats.children.length) box.appendChild(stats);
+
+    if (up.sign) {
+      const sign = document.createElement('div');
+      sign.className = 'pv-up-sign';
+      sign.textContent = '「' + up.sign + '」';
+      box.appendChild(sign);
+    }
     showPanel('pv-panel-up');
   }
 
@@ -414,26 +667,20 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
       box.textContent = '（无足够弹幕文本）';
     } else {
       const max = words[0].count, min = words[words.length - 1].count;
-      for (const { word, count } of words) {
+      words.forEach(({ word, count }, i) => {
         const span = document.createElement('span');
         const size = max === min ? 14 : 12 + Math.round(((count - min) / (max - min)) * 17);
         span.style.fontSize = size + 'px';
-        span.style.color = `hsl(${(word.length * 47) % 360}, 65%, 72%)`;
+        // 主题感知渐变：accent2 → accent 按排名插值
+        const p = words.length > 1 ? Math.round((i / (words.length - 1)) * 100) : 0;
+        span.style.color = `color-mix(in srgb, var(--accent2, #7c5cff) ${p}%, var(--accent, #00c8ff))`;
+        span.style.animationDelay = Math.min(i * 35, 900) + 'ms';
         span.textContent = `${word}(${count})`;
         span.title = `${word}: ${count} 次`;
         box.appendChild(span);
-      }
+      });
     }
     showPanel('pv-panel-cloud');
-  }
-
-  const lastTexts = {};
-  function showAiPanel(panelId, bodyId, text, done, thinkId, thinkBodyId, thinking) {
-    if (done) lastTexts[panelId] = text;
-    $(bodyId).textContent = text;
-    showThinking(thinkId, thinkBodyId, thinking);
-    if (!done && text) $(bodyId).scrollTop = $(bodyId).scrollHeight;
-    showPanel(panelId);
   }
 
   // ── Cookie ──
@@ -470,7 +717,6 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
       const ver = chrome.runtime.getManifest().version;
       if (ver) $('pv-version').textContent = 'v' + ver;
     } catch (e) { }
-    applyTheme((await getSettings()).theme);
 
     // 自动识别当前页 BV
     let tabBvid = null;
@@ -518,6 +764,8 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
       syncOptionStates();
       if (cfg.autoCookie) fillCookieAuto();
     } catch (e) { }
+
+    refreshBatch();
   })();
 
   // ── 事件绑定 ──
@@ -550,10 +798,18 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
     $(id).addEventListener('change', syncTasks);
   }
 
-  // 任务卡整卡点击切换（开关区域由 label 原生处理）
+  // 任务卡整卡点击 / 键盘切换（开关区域由 label 原生处理）
   for (const id of ['pv-task-dm', 'pv-task-cm', 'pv-task-sub']) {
     $(id).addEventListener('click', (e) => {
       if (e.target.closest('.pv-switch')) return;
+      const input = $(id).querySelector('input');
+      if (!input) return;
+      input.checked = !input.checked;
+      syncOptionStates();
+    });
+    $(id).addEventListener('keydown', (e) => {
+      if (e.key !== ' ' && e.key !== 'Enter') return;
+      e.preventDefault();
       const input = $(id).querySelector('input');
       if (!input) return;
       input.checked = !input.checked;
@@ -570,18 +826,22 @@ import { applyTheme, extractBVID, getBiliCookies } from './utils.js';
   $('pv-btn-ai-dm-copy').addEventListener('click', (e) => copyText(lastTexts['pv-panel-ai-dm'] || '', e.currentTarget));
   $('pv-btn-ai-cm-copy').addEventListener('click', (e) => copyText(lastTexts['pv-panel-ai-cm'] || '', e.currentTarget));
 
-  // 清空日志 / 文件
-  $('pv-btn-clear-log').addEventListener('click', clearLog);
+  // 清空日志 / 文件（阻止 summary 默认折叠切换）
+  $('pv-btn-clear-log').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); clearLog(); });
   $('pv-btn-clear-dl').addEventListener('click', clearDownloads);
 
-  // 回车开始
+  // 快捷键：回车开始 / Esc 取消
   $('pv-bvid').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !running) startTask();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && running) cancelTask();
   });
 
   // 点击涟漪
   for (const id of ['pv-btn-start', 'pv-btn-copy', 'pv-btn-cookie', 'pv-btn-select-all',
-                    'pv-btn-settings', 'pv-btn-classic', 'pv-btn-clear-log', 'pv-btn-clear-dl']) {
+                    'pv-btn-settings', 'pv-btn-classic', 'pv-btn-clear-log', 'pv-btn-clear-dl',
+                    'pv-btn-cancel']) {
     const el = $(id);
     if (el) el.addEventListener('click', addRipple);
   }
